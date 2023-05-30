@@ -71,8 +71,6 @@ def decoding_func(nbit: int, storage_nbit: int, dim_length: tir.PrimExpr, transp
 
         shape = (dim_length, data.shape[1])
         w = te.compute(shape=shape, fcompute=f_decode_sym, name="decode")
-        if transpose_output:
-            w = topi.transpose(w)
         return w
 
     return te_decode_sym
@@ -181,10 +179,6 @@ class RowWiseQuantize:
                         *decode_args,
                         primfunc_name_hint="decode"
                     )
-                    if transpose_output:
-                        quantized_permute_dims = self.builder_.emit(
-                            relax.op.permute_dims(quantized_permute_dims)
-                        )
                     return relax.op.matmul(
                         call.args[0],
                         quantized_permute_dims,
