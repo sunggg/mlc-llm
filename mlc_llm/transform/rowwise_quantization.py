@@ -23,7 +23,7 @@ def _tir_packed_uint_to_uint_to_float(storage_nbit: int):
     return f_convert
 
 
-def encoding_func(nbit: int, storage_nbit: int, dtype: str = "float32"):
+def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "float32"):
     def te_encode_sym(weight: te.Tensor):
         n_float_per_int = storage_nbit // nbit
         max_int_value = (1 << (nbit - 1)) - 1
@@ -49,22 +49,27 @@ def encoding_func(nbit: int, storage_nbit: int, dtype: str = "float32"):
         reducer = te.comm_reducer(fcombine=lambda x, y: tir.bitwise_or(x, y), fidentity=lambda dtype: tir.const(0, dtype), name="bitwise_or")
         n_i32 = tir.ceildiv(weight.shape[1], n_float_per_int)
 
-        w_gathered = te.compute(shape=(weight.shape[0], n_i32), fcompute=lambda i, j: reducer(tir.if_then_else(j * n_float_per_int + k < weight.shape[1], f_scale_weight(i, j * n_float_per_int + k) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
+        if transpose:
+            w_gathered = te.compute(shape=(n_i32, weight.shape[0]), fcompute=lambda j, i: reducer(tir.if_then_else(j * n_float_per_int + k < weight.shape[1], f_scale_weight(i, j * n_float_per_int + k) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
+        else:
+            w_gathered = te.compute(shape=(weight.shape[0], n_i32), fcompute=lambda i, j: reducer(tir.if_then_else(j * n_float_per_int + k < weight.shape[1], f_scale_weight(i, j * n_float_per_int + k) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
 
         return w_gathered, scale
 
     return te_encode_sym
 
 
-def decoding_func(nbit: int, storage_nbit: int, dim_length: tir.PrimExpr, dtype: str = "float32"):
+def decoding_func(nbit: int, storage_nbit: int, dim_length: tir.PrimExpr, transpose_output: bool=False, dtype: str = "float32"):
     def te_decode_sym(data, scale):
         n_float_per_int = storage_nbit // nbit
         def f_decode_sym(i, j):
             f_convert = _tir_packed_uint_to_uint_to_float(storage_nbit)
-            data_float = f_convert(nbit, data[j, i // n_float_per_int], i % n_float_per_int, dtype=dtype)
-            return data_float * scale[j]
+            data_float = f_convert(nbit, data[i // n_float_per_int, j], i % n_float_per_int, dtype=dtype)
+            # data_float = f_convert(nbit, data[i, j // n_float_per_int], j % n_float_per_int, dtype=dtype)
+            scale_float = scale[j]
+            return data_float * scale_float
 
-        shape = (dim_length, data.shape[0])
+        shape = (dim_length, data.shape[1])
         w = te.compute(shape=shape, fcompute=f_decode_sym, name="decode")
         return w
 
@@ -132,6 +137,7 @@ class RowWiseQuantize:
                     encoding_func(
                         self.nbit,
                         self.storage_nbit,
+                        transpose=transpose,
                         dtype=self.dtype,
                     ),
                     x,
@@ -150,6 +156,7 @@ class RowWiseQuantize:
                 return decode_args
 
             def quantize_matmul(self, call: relax.Call):
+                x = call.args[0]
                 call_arg = self.lookup_binding(call.args[1])
                 if call_arg.op == tvm.ir.Op.get("relax.permute_dims"):
                     if (
@@ -158,6 +165,7 @@ class RowWiseQuantize:
                         or call_arg.args[0] not in self._params
                     ):
                         return call
+                    transpose_output = x.struct_info.shape[-2] != 1
 
                     decode_args = self.emit_encoding(call_arg.args[0], transpose=True)
                     quantized_permute_dims = self.builder_.call_te(
@@ -165,6 +173,7 @@ class RowWiseQuantize:
                             self.nbit,
                             self.storage_nbit,
                             call_arg.args[0].struct_info.shape[-1],
+                            transpose_output=transpose_output,
                             dtype=self.dtype,
                         ),
                         *decode_args,
