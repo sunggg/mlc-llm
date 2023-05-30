@@ -47,12 +47,12 @@ def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "f
 
         k = te.reduce_axis((0, n_float_per_int), name="k")
         reducer = te.comm_reducer(fcombine=lambda x, y: tir.bitwise_or(x, y), fidentity=lambda dtype: tir.const(0, dtype), name="bitwise_or")
-        n_i32 = tir.ceildiv(weight.shape[1], n_float_per_int)
+        n_i32 = tir.ceildiv(weight.shape[0], n_float_per_int)
 
         if transpose:
-            w_gathered = te.compute(shape=(n_i32, weight.shape[0]), fcompute=lambda j, i: reducer(tir.if_then_else(j * n_float_per_int + k < weight.shape[1], f_scale_weight(i, j * n_float_per_int + k) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
+            w_gathered = te.compute(shape=(weight.shape[1], n_i32), fcompute=lambda j, i: reducer(tir.if_then_else(i * n_float_per_int + k < weight.shape[0], f_scale_weight(i * n_float_per_int + k, j) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
         else:
-            w_gathered = te.compute(shape=(weight.shape[0], n_i32), fcompute=lambda i, j: reducer(tir.if_then_else(j * n_float_per_int + k < weight.shape[1], f_scale_weight(i, j * n_float_per_int + k) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
+            w_gathered = te.compute(shape=(n_i32, weight.shape[1]), fcompute=lambda i, j: reducer(tir.if_then_else(i * n_float_per_int + k < weight.shape[0], f_scale_weight(i * n_float_per_int + k, j) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
 
         return w_gathered, scale
 
@@ -64,12 +64,11 @@ def decoding_func(nbit: int, storage_nbit: int, dim_length: tir.PrimExpr, transp
         n_float_per_int = storage_nbit // nbit
         def f_decode_sym(i, j):
             f_convert = _tir_packed_uint_to_uint_to_float(storage_nbit)
-            data_float = f_convert(nbit, data[i // n_float_per_int, j], i % n_float_per_int, dtype=dtype)
-            # data_float = f_convert(nbit, data[i, j // n_float_per_int], j % n_float_per_int, dtype=dtype)
+            data_float = f_convert(nbit, data[i, j // n_float_per_int], j % n_float_per_int, dtype=dtype)
             scale_float = scale[j]
             return data_float * scale_float
 
-        shape = (dim_length, data.shape[1])
+        shape = (data.shape[0], data.shape[1] * n_float_per_int)
         w = te.compute(shape=shape, fcompute=f_decode_sym, name="decode")
         return w
 
@@ -83,8 +82,8 @@ def decoding_after_taking_func(nbit: int, storage_nbit: int, dim_length: tir.Pri
 
         def f_decode_sym(i, j):
             f_convert = _tir_packed_uint_to_uint_to_float(storage_nbit)
-            data_float = f_convert(nbit, data[indices[i], j // n_float_per_int], j % n_float_per_int, dtype=dtype)
-            scale_float = scale[indices[i]]
+            data_float = f_convert(nbit, data[i // n_float_per_int, indices[j]], i % n_float_per_int, dtype=dtype)
+            scale_float = scale[i]
             return data_float * scale_float
 
         shape = (indices.shape[0], dim_length)
