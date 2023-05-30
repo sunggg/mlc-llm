@@ -250,19 +250,21 @@ def mod_transform_before_build(
         ]
 
     if args.quantization.mode != "no":
-        if ARGS.model.startswith("rwkv-"):
-            mod = mlc_llm.transform.RWKVQuantize(  # pylint: disable=not-callable
-                mode=args.quantization.mode,
-                dtype=args.quantization.model_dtype,
-            )(mod)
-        else:
-            mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
-                group_size=40 if args.quantization.mode.endswith("3") else 32,
-                sym=args.quantization.sym,
-                mode=args.quantization.mode,
-                storage_nbit=args.quantization.storage_nbit,
-                dtype=args.quantization.model_dtype,
-            )(mod)
+        # if ARGS.model.startswith("rwkv-"):
+        #     mod = mlc_llm.transform.RWKVQuantize(  # pylint: disable=not-callable
+        #         mode=args.quantization.mode,
+        #         dtype=args.quantization.model_dtype,
+        #     )(mod)
+        # else:
+        #     mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
+        #         group_size=40 if args.quantization.mode.endswith("3") else 32,
+        #         sym=args.quantization.sym,
+        #         mode=args.quantization.mode,
+        #         storage_nbit=args.quantization.storage_nbit,
+        #         dtype=args.quantization.model_dtype,
+        #     )(mod)
+        mod = mlc_llm.transform.RowWiseQuantize(dtype=args.quantization.model_dtype)(mod)
+
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
     mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
     mod = mlc_llm.transform.FuseDecodeMatmulEwise(  # pylint: disable=not-callable
