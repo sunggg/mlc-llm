@@ -13,12 +13,11 @@ from tvm.script import tir as T
 
 # fmt: off
 def _tir_packed_uint_to_uint_to_float(storage_nbit: int):
-    storage_dtype = "uint" + str(storage_nbit)
+    storage_dtype = "int" + str(storage_nbit)
 
     def f_convert(nbit: int, val: tir.PrimExpr, pos: tir.PrimExpr, dtype: str):
         assert val.dtype == storage_dtype
-        max_int_value = (1 << (nbit - 1)) - 1
-        return ((val >> (pos.astype("uint32") * tir.const(nbit, "uint32"))) & tir.const((1 << nbit) - 1, "uint32")).astype(dtype) - tir.const(max_int_value, dtype)
+        return ((val >> (pos.astype("uint32") * tir.const(nbit, "uint32"))) & tir.const((1 << nbit) - 1, "uint32")).astype(dtype)
 
     return f_convert
 
@@ -37,12 +36,11 @@ def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "f
             return (max_value / tir.const(max_int_value, dtype))
 
         scale = te.compute(shape=scale_min_shape, fcompute=f_compute_scale, name="scale")
-        storage_dtype = ("uint" + str(storage_nbit))
+        storage_dtype = ("int" + str(storage_nbit))
 
         def f_scale_weight(i, j):
-            # TODO: Remove bias add for cutlass offload
-            w_scaled = tir.round(weight[i, j] / scale[i] + tir.const(max_int_value, dtype))
-            w_scaled = T.min(T.max(w_scaled, tir.const(0, dtype)), tir.const(max_int_value * 2, dtype)).astype(storage_dtype)
+            w_scaled = tir.round(weight[i, j] / scale[i])
+            w_scaled = T.min(T.max(w_scaled, tir.const(-max_int_value + 1, dtype)), tir.const(max_int_value, dtype)).astype(storage_dtype)
             return w_scaled
 
         k = te.reduce_axis((0, n_float_per_int), name="k")
