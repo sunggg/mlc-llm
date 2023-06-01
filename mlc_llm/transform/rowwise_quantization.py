@@ -17,7 +17,9 @@ def _tir_packed_uint_to_uint_to_float(storage_nbit: int):
 
     def f_convert(nbit: int, val: tir.PrimExpr, pos: tir.PrimExpr, dtype: str):
         assert val.dtype == storage_dtype
-        return ((val >> (pos.astype("uint32") * tir.const(nbit, "uint32"))) & tir.const((1 << nbit) - 1, "uint32")).astype(dtype)
+        mask = tir.const((1 << nbit) - 1, "int32")
+        unextended = (val >> (pos.astype("int32") * tir.const(nbit, "int32"))) & mask
+        return tir.Cast(dtype, (unextended << tir.const(32 - nbit, "int32")) >> tir.const(32 - nbit, "int32"))
 
     return f_convert
 
@@ -40,8 +42,8 @@ def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "f
 
         def f_scale_weight(i, j):
             w_scaled = tir.round(weight[i, j] / scale[i])
-            w_scaled = T.min(T.max(w_scaled, tir.const(-max_int_value + 1, dtype)), tir.const(max_int_value, dtype)).astype(storage_dtype)
-            return w_scaled
+            w_scaled = T.min(T.max(w_scaled, tir.const(-max_int_value - 1, dtype)), tir.const(max_int_value, dtype)).astype(storage_dtype)
+            return w_scaled & tir.const((1 << nbit) - 1, storage_dtype)
 
         k = te.reduce_axis((0, n_float_per_int), name="k")
         reducer = te.comm_reducer(fcombine=lambda x, y: tir.bitwise_or(x, y), fidentity=lambda dtype: tir.const(0, dtype), name="bitwise_or")
