@@ -112,7 +112,6 @@ class RowWiseQuantize:
                 super().__init__(mod)
                 self.mod = mod
                 self._params = set()
-                self.group_size = 40
                 self.nbit = 4
                 self.storage_nbit = 8
                 self.dtype = dtype
@@ -143,9 +142,16 @@ class RowWiseQuantize:
                     primfunc_name_hint="encode",
                 )
 
+                # HACK
+                if transpose:
+                    packed_weight = self.builder_.normalize(encoded_data[0])
+                    encoded_weight = relax.call_pure_packed("ft_preprocess_weight", packed_weight, sinfo_args=packed_weight.struct_info)
+                else:
+                    encoded_weight = encoded_data[0]
+
                 decode_args = []
                 decode_args.append(
-                    self.builder_.emit(relax.TupleGetItem(encoded_data, 0))
+                    self.builder_.emit(encoded_weight)
                 )
                 decode_args.append(
                     self.builder_.emit(relax.TupleGetItem(encoded_data, 1))
@@ -167,6 +173,7 @@ class RowWiseQuantize:
                     transpose_output = x.struct_info.shape[-2] != 1
 
                     decode_args = self.emit_encoding(call_arg.args[0], transpose=True)
+
                     quantized_permute_dims = self.builder_.call_te(
                         decoding_func(
                             self.nbit,

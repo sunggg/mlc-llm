@@ -12,6 +12,7 @@ from tvm import relax
 import mlc_llm
 from mlc_llm import utils
 from mlc_llm.relax_model import gpt_neox, llama, moss, rwkv
+from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 
 
 def _parse_args():
@@ -189,8 +190,8 @@ def validate_config(model_path: str):
 
 def debug_dump_script(mod, name, args):
     """Debug dump mode"""
-    if not args.debug_dump:
-        return
+    # if not args.debug_dump:
+    #     return
     dump_path = os.path.join(args.artifact_path, "debug", name)
     with open(dump_path, "w", encoding="utf-8") as outfile:
         outfile.write(mod.script(show_meta=True))
@@ -265,12 +266,13 @@ def mod_transform_before_build(
         #     )(mod)
         mod = mlc_llm.transform.RowWiseQuantize(dtype=args.quantization.model_dtype)(mod)
 
-    mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
-    mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
-    mod = mlc_llm.transform.FuseDecodeMatmulEwise(  # pylint: disable=not-callable
-        args.quantization.model_dtype, args.target_kind
-    )(mod)
+    # mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
+    # mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
+    # mod = mlc_llm.transform.FuseDecodeMatmulEwise(  # pylint: disable=not-callable
+    #     args.quantization.model_dtype, args.target_kind
+    # )(mod)
     mod = relax.transform.DeadCodeElimination(model_names)(mod)
+    # print(mod)
     mod = relax.transform.LiftTransformParams()(mod)
     mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
 
@@ -383,7 +385,7 @@ def main():
     use_cache = ARGS.use_cache and os.path.isfile(cache_path)
     with open(os.path.join(ARGS.model_path, "config.json"), encoding="utf-8") as i_f:
         config = json.load(i_f)
-        if not use_cache:
+        if True:
             if ARGS.model_category == "llama":
                 mod, params = llama.get_model(ARGS, config)
             elif ARGS.model_category == "gpt_neox":
@@ -395,6 +397,10 @@ def main():
             else:
                 raise ValueError(f"Model {ARGS.model} not supported")
             mod = mod_transform_before_build(mod, params, ARGS)
+            mod = partition_for_cutlass(mod)
+            print("after cutlass partition")
+            print(mod)
+            return
             with open(cache_path, "wb") as outfile:
                 pickle.dump(mod, outfile)
             print(f"Save a cached module to {cache_path}.")
