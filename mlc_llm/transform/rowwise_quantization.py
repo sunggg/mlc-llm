@@ -13,7 +13,7 @@ from tvm.script import tir as T
 
 # fmt: off
 def _tir_packed_uint_to_uint_to_float(storage_nbit: int):
-    storage_dtype = "int" + str(storage_nbit)
+    storage_dtype = "uint" + str(storage_nbit)
 
     def f_convert(nbit: int, val: tir.PrimExpr, pos: tir.PrimExpr, dtype: str):
         assert val.dtype == storage_dtype
@@ -37,12 +37,12 @@ def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "f
             return (max_value / tir.const(max_int_value, dtype))
 
         scale = te.compute(shape=scale_min_shape, fcompute=f_compute_scale, name="scale")
-        storage_dtype = ("int" + str(storage_nbit))
+        storage_dtype = ("uint" + str(storage_nbit))
 
         def f_scale_weight(i, j):
             # TODO: bias add needed?
-            w_scaled = tir.round(weight[i, j] / scale[i])
-            w_scaled = T.min(T.max(w_scaled, tir.const(0, dtype)), tir.const(max_int_value, dtype)).astype(storage_dtype)
+            w_scaled = tir.round(weight[i, j] / scale[i] + tir.const(max_int_value, dtype))
+            w_scaled = T.min(T.max(w_scaled, tir.const(0, dtype)), tir.const(max_int_value * 2, dtype)).astype(storage_dtype)
             return w_scaled
 
         k = te.reduce_axis((0, n_float_per_int), name="k")
@@ -59,7 +59,7 @@ def encoding_func(nbit: int, storage_nbit: int, transpose: bool, dtype: str = "f
     return te_encode_sym
 
 
-def decoding_func(nbit: int, storage_nbit: int, dtype: str = "float32"):
+def decoding_func(nbit: int, storage_nbit: int, dim_length: tir.PrimExpr, transpose_output: bool=False, dtype: str = "float32"):
     def te_decode_sym(data, scale):
         n_float_per_int = storage_nbit // nbit
         def f_decode_sym(i, j):
@@ -82,8 +82,8 @@ def decoding_after_taking_func(nbit: int, storage_nbit: int, dim_length: tir.Pri
 
         def f_decode_sym(i, j):
             f_convert = _tir_packed_uint_to_uint_to_float(storage_nbit)
-            data_float = f_convert(nbit, data[indices[i] // n_float_per_int, j], indices[i] % n_float_per_int, dtype=dtype)
-            scale_float = scale[indices[i]]
+            data_float = f_convert(nbit, data[i // n_float_per_int, indices[j]], i % n_float_per_int, dtype=dtype)
+            scale_float = scale[i]
             return data_float * scale_float
 
         shape = (indices.shape[0], dim_length)
@@ -143,7 +143,7 @@ class RowWiseQuantize:
                 )
 
                 # HACK
-                if False and transpose:
+                if transpose:
                     packed_weight = self.builder_.normalize(encoded_data[0])
                     encoded_weight = relax.call_pure_packed("cutlass.ft_preprocess_weight", packed_weight, sinfo_args=packed_weight.struct_info)
                 else:
@@ -161,6 +161,7 @@ class RowWiseQuantize:
                 return decode_args
 
             def quantize_matmul(self, call: relax.Call):
+                x = call.args[0]
                 call_arg = self.lookup_binding(call.args[1])
                 if call_arg.op == tvm.ir.Op.get("relax.permute_dims"):
                     if (
@@ -169,6 +170,7 @@ class RowWiseQuantize:
                         or call_arg.args[0] not in self._params
                     ):
                         return call
+                    transpose_output = x.struct_info.shape[-2] != 1
 
                     decode_args = self.emit_encoding(call_arg.args[0], transpose=True)
 
@@ -176,6 +178,8 @@ class RowWiseQuantize:
                         decoding_func(
                             self.nbit,
                             self.storage_nbit,
+                            call_arg.args[0].struct_info.shape[-1],
+                            transpose_output=transpose_output,
                             dtype=self.dtype,
                         ),
                         *decode_args,
@@ -215,8 +219,8 @@ class RowWiseQuantize:
 
                 if call.op == tvm.ir.Op.get("relax.matmul"):
                     return self.quantize_matmul(call)
-                # elif call.op == tvm.ir.Op.get("relax.take"):
-                #     return self.quantize_take(call)
+                elif call.op == tvm.ir.Op.get("relax.take"):
+                    return self.quantize_take(call)
                 else:
                     return call
 
