@@ -252,11 +252,6 @@ def mod_transform_before_build(
 
     mod = mlc_llm.transform.RowWiseQuantize(dtype=args.quantization.model_dtype)(mod)
     mod = relax.transform.DeadCodeElimination(model_names)(mod)
-    mod = partition_for_cutlass(mod)
-    mod = relax.transform.RunCodegen(
-        {"cutlass": {"sm": 80, "find_first_valid": False}},
-        entry_functions=model_names
-    )(mod)
     mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
     mod = relax.transform.LiftTransformParams()(mod)
     mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
