@@ -398,9 +398,15 @@ def main():
                 raise ValueError(f"Model {ARGS.model} not supported")
             mod = mod_transform_before_build(mod, params, ARGS)
             mod = partition_for_cutlass(mod)
-            print("after cutlass partition")
-            print(mod)
+            mod = relax.transform.RunCodegen(
+                {"cutlass": {"sm": 80, "find_first_valid": False}},
+                entry_functions=["prefill", "decode"]
+            )(mod)
+
+            # print("after cutlass partition")
+            # print(mod)
             return
+
             with open(cache_path, "wb") as outfile:
                 pickle.dump(mod, outfile)
             print(f"Save a cached module to {cache_path}.")

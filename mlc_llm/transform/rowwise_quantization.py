@@ -145,7 +145,7 @@ class RowWiseQuantize:
                 # HACK
                 if transpose:
                     packed_weight = self.builder_.normalize(encoded_data[0])
-                    encoded_weight = relax.call_pure_packed("ft_preprocess_weight", packed_weight, sinfo_args=packed_weight.struct_info)
+                    encoded_weight = relax.call_pure_packed("cutlass.ft_preprocess_weight", packed_weight, sinfo_args=packed_weight.struct_info)
                 else:
                     encoded_weight = encoded_data[0]
 
