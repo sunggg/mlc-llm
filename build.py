@@ -250,29 +250,14 @@ def mod_transform_before_build(
             "get_metadata",
         ]
 
-    if args.quantization.mode != "no":
-        # if ARGS.model.startswith("rwkv-"):
-        #     mod = mlc_llm.transform.RWKVQuantize(  # pylint: disable=not-callable
-        #         mode=args.quantization.mode,
-        #         dtype=args.quantization.model_dtype,
-        #     )(mod)
-        # else:
-        #     mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
-        #         group_size=40 if args.quantization.mode.endswith("3") else 32,
-        #         sym=args.quantization.sym,
-        #         mode=args.quantization.mode,
-        #         storage_nbit=args.quantization.storage_nbit,
-        #         dtype=args.quantization.model_dtype,
-        #     )(mod)
-        mod = mlc_llm.transform.RowWiseQuantize(dtype=args.quantization.model_dtype)(mod)
-
-    # mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
-    # mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
-    # mod = mlc_llm.transform.FuseDecodeMatmulEwise(  # pylint: disable=not-callable
-    #     args.quantization.model_dtype, args.target_kind
-    # )(mod)
+    mod = mlc_llm.transform.RowWiseQuantize(dtype=args.quantization.model_dtype)(mod)
     mod = relax.transform.DeadCodeElimination(model_names)(mod)
-    # print(mod)
+    mod = partition_for_cutlass(mod)
+    mod = relax.transform.RunCodegen(
+        {"cutlass": {"sm": 80, "find_first_valid": False}},
+        entry_functions=model_names
+    )(mod)
+    mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
     mod = relax.transform.LiftTransformParams()(mod)
     mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
 
@@ -397,15 +382,8 @@ def main():
             else:
                 raise ValueError(f"Model {ARGS.model} not supported")
             mod = mod_transform_before_build(mod, params, ARGS)
-            mod = partition_for_cutlass(mod)
-            mod = relax.transform.RunCodegen(
-                {"cutlass": {"sm": 80, "find_first_valid": False}},
-                entry_functions=["prefill", "decode"]
-            )(mod)
-
-            # print("after cutlass partition")
-            # print(mod)
-            return
+            # print(mod.without_attr("external_mods").without_attr("const_name_to_constant"))
+            # return
 
             with open(cache_path, "wb") as outfile:
                 pickle.dump(mod, outfile)
