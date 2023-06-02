@@ -253,7 +253,7 @@ def mod_transform_before_build(
     use_cutlass = True
 
     if use_cutlass:
-        mod = mlc_llm.transform.RowWiseQuantize(dtype=args.quantization.model_dtype)(mod)
+        mod = mlc_llm.transform.RowWiseQuantize("float32")(mod)
     else:
         mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
             group_size=40 if args.quantization.mode.endswith("3") else 32,
@@ -267,6 +267,7 @@ def mod_transform_before_build(
 
     if use_cutlass:
         mod = partition_for_cutlass(mod)
+        print(mod)
         mod = relax.transform.RunCodegen(
             {"cutlass": {"sm": 80, "find_first_valid": False}},
             entry_functions=model_names
