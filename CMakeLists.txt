@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
 project(mlc_llm C CXX)
-link_directories(/home/masa/projects/dev/tvm/build/3rdparty/cutlass_fpA_intB_gemm/cutlass_kernels)
 
 include(CheckCXXCompilerFlag)
 if(NOT MSVC)
@@ -58,6 +57,10 @@ add_subdirectory(${TOKENZIER_CPP_PATH} tokenizers EXCLUDE_FROM_ALL)
 tvm_file_glob(GLOB_RECURSE MLC_LLM_SRCS cpp/*.cc)
 tvm_file_glob(GLOB_RECURSE MLC_CLI_SRCS cpp/cli_main.cc)
 list(REMOVE_ITEM MLC_LLM_SRCS ${MLC_CLI_SRCS})
+
+if (USE_CUDA AND USE_CUTLASS)
+  link_directories($ENV{TVM_HOME}/build/3rdparty/cutlass_fpA_intB_gemm/cutlass_kernels)
+endif()
 
 add_library(mlc_llm_objs OBJECT ${MLC_LLM_SRCS})
 add_library(mlc_cli_objs OBJECT ${MLC_CLI_SRCS})
