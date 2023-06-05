@@ -444,10 +444,11 @@ void Chat(ChatModule* chat, const std::filesystem::path& artifact_path,
   PrintSpecialCommands();
   chat->Reload(model);
   chat->ProcessSystemPrompts();
-  std::cout << chat->RuntimeStatsText() << std::endl << std::flush;
 
   auto input = "Write a poem about Pittsburgh.";
   Converse(chat, input, stream_interval, std::cout);
+
+  return;
 
   while (true) {
     std::string input;
@@ -474,11 +475,8 @@ void Chat(ChatModule* chat, const std::filesystem::path& artifact_path,
         new_local_id = local_id;
       }
       model = ModelPaths::Find(artifact_path, device_name, new_local_id);
-      local_id = new_local_id;
-      std::cout << "Loading model..." << std::endl;
       chat->Reload(model);
       local_id = new_local_id;
-      std::cout << "LOAD MODEL " << local_id << " SUCCESS" << std::endl << std::flush;
     } else if (input.substr(0, 5) == "/help") {
       PrintSpecialCommands();
     } else {

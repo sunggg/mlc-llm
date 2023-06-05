@@ -887,7 +887,7 @@ class LLMChatModule : public ModuleNode {
   }
 
   // overrides
-  PackedFunc GetFunction(const String& name, const ObjectPtr<Object>& sptr_to_self) final {
+  PackedFunc GetFunction(const std::string& name, const ObjectPtr<Object>& sptr_to_self) final {
     if (name == "reload") {
       return PackedFunc([this, sptr_to_self](TVMArgs args, TVMRetValue* rv) {
         chat_ = nullptr;
