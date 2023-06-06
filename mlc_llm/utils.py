@@ -100,8 +100,7 @@ def split_transform_deploy_mod(
             transform_func_name = name + "_transform_params"
     assert transform_func_name is not None
 
-    for gv in mod.functions:
-        func = mod[gv]
+    for gv, func in mod.functions.items():
         if isinstance(func, tvm.tir.PrimFunc):
             mod_transform[gv] = func
             mod_deploy[gv] = func

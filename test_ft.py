@@ -9,13 +9,13 @@ from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 
 
 dtype = "float16"
-# x_shape = (64, 64)
-# y_shape = (128, 64)
+x_shape = (64, 64)
+y_shape = (128, 64)
 
-x_shape = (512, 4096)
-y_shape = (4096, 4096)
+# x_shape = (512, 4096)
+# y_shape = (4096, 4096)
 
-use_bias = False
+use_bias = True
 
 if use_bias:
     mod = get_relax_matmul_module(
@@ -42,8 +42,9 @@ bias = np.random.randn(1, y_shape[0]).astype("float16")
 
 mod = mlc_llm.transform.RowWiseQuantize(dtype="float32")(mod)
 
-mod = partition_for_cutlass(mod)
 print(mod)
+
+mod = partition_for_cutlass(mod)
 
 mod = relax.transform.RunCodegen(
     {"cutlass": {"sm": 80, "find_first_valid": False}},
