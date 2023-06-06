@@ -828,10 +828,8 @@ def _get_dict():
     }
 
 
-DICT = _get_dict()
-
-
 def lookup(func):
+    DICT = _get_dict()
     for (hash_value, func_before), f_after in DICT.items():
         if tvm.ir.structural_hash(func) == hash_value and tvm.ir.structural_equal(
             func, func_before
