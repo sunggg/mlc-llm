@@ -18,14 +18,27 @@ from mlc_llm import utils
 
 def _parse_args():
     args = argparse.ArgumentParser()
-    args.add_argument("--local-id", type=str, required=True)
+    args.add_argument(
+        "--model",
+        type=str,
+        default="auto",
+        help='The name of the model to build. If it is "auto", we will automatically set the '
+        'model name according to "--model-path", "hf-path" or the model folders under '
+        '"--artifact-path/models"',
+    )
+    args.add_argument(
+        "--quantization",
+        type=str,
+        choices=[*utils.quantization_dict.keys()],
+        default=list(utils.quantization_dict.keys())[0],
+    )
     args.add_argument("--device-name", type=str, default="auto")
     args.add_argument("--debug-dump", action="store_true", default=False)
     args.add_argument("--artifact-path", type=str, default="dist")
     args.add_argument("--prompt", type=str, default="The capital of Canada is")
-    args.add_argument("--profile", action="store_true", default=False)
+    args.add_argument("--profile", action="store_true", default=True)
+    args.add_argument("--seqlen", type=int, default=256)
     parsed = args.parse_args()
-    parsed.model, parsed.quantization = parsed.local_id.rsplit("-", 1)
     utils.argparse_postproc_common(parsed)
     parsed.artifact_path = os.path.join(
         parsed.artifact_path, f"{parsed.model}-{parsed.quantization.name}"
@@ -58,7 +71,7 @@ class LibCompare(LibCompareVMInstrument):
 
 def print_as_table(sorted_list: List[Tuple[str, Tuple[float, int]]]):
     print(
-        "Name".ljust(50)
+        "Name".ljust(65)
         + "Time (ms)".ljust(12)
         + "Count".ljust(8)
         + "Total time (ms)".ljust(18)
@@ -70,7 +83,7 @@ def print_as_table(sorted_list: List[Tuple[str, Tuple[float, int]]]):
         weighted_time = time * record[1][1]
         percentage = weighted_time / total_time * 100
         print(
-            record[0].ljust(50)
+            record[0].ljust(65)
             + "{:.4f}".format(time).ljust(12)
             + str(record[1][1]).ljust(8)
             + "{:.4f}".format(weighted_time).ljust(18)
@@ -91,21 +104,18 @@ def deploy_to_pipeline(args) -> None:
     )
     vm = relax.VirtualMachine(ex, device)
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        os.path.join(args.artifact_path, "params"), trust_remote_code=True
-    )
-
-    print("Tokenizing...")
+    seqlen = args.seqlen
     inputs = tvm.nd.array(
-        tokenizer(args.prompt, return_tensors="pt").input_ids.to(torch.int32).numpy(),
-        device,
-    )
+            torch.full((1,seqlen), fill_value=2)
+            .to(torch.int32).numpy(),
+            device
+        )
     first_sampled_token = tvm.nd.array(np.array([[6234]]).astype("int32"), device)
     seq_len_shape = tvm.runtime.ShapeTuple([inputs.shape[1]])
     second_seq_len_shape = tvm.runtime.ShapeTuple([inputs.shape[1] + 1])
     kv_caches = vm["create_kv_cache"]()
-    # skip warm up
 
+    # skip warm up
     logits, kv_caches = vm["prefill"](inputs, seq_len_shape, kv_caches, const_params)
     logits, kv_caches = vm["decode"](
         first_sampled_token, second_seq_len_shape, kv_caches, const_params
@@ -124,7 +134,7 @@ def deploy_to_pipeline(args) -> None:
     device.sync()
     end = time.time()
     fcache_view = tvm.get_global_func("vm.builtin.attention_kv_cache_view")
-    first_k_cache = fcache_view(kv_caches[0], ShapeTuple([7, 32, 128]))
+    first_k_cache = fcache_view(kv_caches[0], ShapeTuple([seqlen+1, 32, 128]))
     if args.debug_dump:
         print(f"output kv_cache[0]:\n{first_k_cache.numpy().transpose(1, 0, 2)}")
         print(f"output logits:\n{logits.numpy()}")
