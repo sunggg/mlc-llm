@@ -252,6 +252,12 @@ def mod_transform_before_build(
 
     use_cutlass = True
 
+    # from mlc_llm.transform import combine_parallel_transposed_matmul
+    # mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
+    # mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
+    # mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 3)
+    # mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 2)
+
     if use_cutlass:
         mod = mlc_llm.transform.RowWiseQuantize("float32")(mod)
     else:
