@@ -252,6 +252,12 @@ def mod_transform_before_build(
 
     use_cutlass = True
 
+
+    from mlc_llm.transform import rewrite_attention
+
+    mod["prefill"] = rewrite_attention(mod["prefill"])
+    mod["decode"] = rewrite_attention(mod["decode"])
+
     # from mlc_llm.transform import combine_parallel_transposed_matmul
     # mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
     # mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
