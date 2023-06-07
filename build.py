@@ -351,7 +351,7 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
         passes = []
 
         with tvm.target.Target("nvidia/geforce-rtx-3070"), tvm.transform.PassContext(opt_level=3):
-            if True:
+            if False:
                 passes.append(
                     relax.transform.MetaScheduleTuneIRMod(
                         params={},
