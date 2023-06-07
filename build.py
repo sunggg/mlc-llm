@@ -335,21 +335,38 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
 
     debug_dump_script(mod_deploy, "mod_before_build.py", args)
     if target_kind != "cpu":
-        db = utils.get_database(args.db_path)  # pylint: disable=invalid-name
-        with db, tvm.target.Target("apple/m1-gpu-restricted"):
-            if args.target_kind == "android":
-                mod_deploy = mlc_llm.dispatch.DispatchTIROperatorAdreno()(  # pylint: disable=not-callable
-                    mod_deploy
-                )
-            mod_deploy = relax.transform.MetaScheduleApplyDatabase()(mod_deploy)
+        # db = utils.get_database(args.db_path)  # pylint: disable=invalid-name
+        # with db, tvm.target.Target("apple/m1-gpu-restricted"):
+        #     if args.target_kind == "android":
+        #         mod_deploy = mlc_llm.dispatch.DispatchTIROperatorAdreno()(  # pylint: disable=not-callable
+        #             mod_deploy
+        #         )
+        #     mod_deploy = relax.transform.MetaScheduleApplyDatabase()(mod_deploy)
         #     mod_deploy = (
         #         mlc_llm.dispatch.DispatchTIROperator(  # pylint: disable=not-callable
         #             args.model_category
         #         )(mod_deploy)
         #     )
-            mod_deploy = tvm.tir.transform.DefaultGPUSchedule()(mod_deploy)
-            mod_deploy = mlc_llm.transform.LiftTIRGlobalBufferAlloc()(mod_deploy)
-            mod_deploy = tvm.tir.transform.ForceNarrowIndexToInt32()(mod_deploy)
+        work_dir = "work"
+        passes = []
+
+        with tvm.target.Target("nvidia/geforce-rtx-3070"), tvm.transform.PassContext(opt_level=3):
+            if True:
+                passes.append(
+                    relax.transform.MetaScheduleTuneIRMod(
+                        params={},
+                        work_dir=work_dir,
+                        max_trials_global=2000,
+                        max_trials_per_task=50,
+                        op_names=["rms_norm1"]
+                    )
+                )
+            passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
+            passes.append(tvm.tir.transform.DefaultGPUSchedule())
+            passes.append(mlc_llm.transform.LiftTIRGlobalBufferAlloc())
+            passes.append(tvm.tir.transform.ForceNarrowIndexToInt32())
+
+            mod_deploy = tvm.transform.Sequential(passes)(mod_deploy)
 
     if args.debug_load_script:
         mod_deploy = debug_load_script("mod_build_stage_debug.py", args)
