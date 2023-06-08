@@ -12,7 +12,7 @@ from tvm.script import tir as T
 
 
 # fmt: off
-def _tir_packed_uint_to_uint_to_float(storage_nbit: int):
+def _tir_packed_int_to_int_to_float(storage_nbit: int):
     storage_dtype = "int" + str(storage_nbit)
 
     def f_convert(nbit: int, val: tir.PrimExpr, pos: tir.PrimExpr, dtype: str):
@@ -20,6 +20,17 @@ def _tir_packed_uint_to_uint_to_float(storage_nbit: int):
         mask = tir.const((1 << nbit) - 1, "int32")
         unextended = (val >> (pos.astype("int32") * tir.const(nbit, "int32"))) & mask
         return tir.Cast(dtype, (unextended << tir.const(32 - nbit, "int32")) >> tir.const(32 - nbit, "int32"))
+
+    return f_convert
+
+
+def _tir_packed_uint_to_uint_to_float(storage_nbit: int):
+    storage_dtype = "uint" + str(storage_nbit)
+
+    def f_convert(nbit: int, val: tir.PrimExpr, pos: tir.PrimExpr, dtype: str):
+        assert val.dtype == storage_dtype
+        max_int_value = (1 << (nbit - 1)) - 1
+        return ((val >> (pos.astype("uint32") * tir.const(nbit, "uint32"))) & tir.const((1 << nbit) - 1, "uint32")).astype(dtype) - tir.const(max_int_value, dtype)
 
     return f_convert
 
@@ -63,7 +74,7 @@ def decoding_func(nbit: int, storage_nbit: int, dtype: str = "float32"):
     def te_decode_sym(data, scale):
         n_float_per_int = storage_nbit // nbit
         def f_decode_sym(i, j):
-            f_convert = _tir_packed_uint_to_uint_to_float(storage_nbit)
+            f_convert = _tir_packed_int_to_int_to_float(storage_nbit)
             data_float = f_convert(nbit, data[i, j // n_float_per_int], j % n_float_per_int, dtype="float16")
             scale_float = scale[j]
             return data_float * scale_float
@@ -75,21 +86,57 @@ def decoding_func(nbit: int, storage_nbit: int, dtype: str = "float32"):
     return te_decode_sym
 
 
-def decoding_after_taking_func(nbit: int, storage_nbit: int, dim_length: tir.PrimExpr, dtype: str = "float32"):
+def decoding_after_taking_func(group_size: int, nbit: int, storage_nbit: int, dim_length: tir.PrimExpr, dtype: str = "float32"):
     def te_take_decode_sym(data, scale, indices):
         n_float_per_int = storage_nbit // nbit
         assert len(indices.shape) == 1
 
         def f_decode_sym(i, j):
             f_convert = _tir_packed_uint_to_uint_to_float(storage_nbit)
-            data_float = f_convert(nbit, data[indices[i] // n_float_per_int, j], indices[i] % n_float_per_int, dtype=dtype)
-            scale_float = scale[indices[i]]
+            data_float = f_convert(nbit, data[indices[i], j // n_float_per_int], j % n_float_per_int, dtype=dtype)
+            scale_float = scale[indices[i], j // group_size]
             return data_float * scale_float
 
         shape = (indices.shape[0], dim_length)
         return te.compute(shape=shape, fcompute=f_decode_sym, name="take_decode")
 
     return te_take_decode_sym
+
+
+def groupwise_encoding_func(group_size: int, nbit: int, storage_nbit: int, dtype: str = "float32"):
+    def te_encode_sym(weight: te.Tensor):
+        n_group = tir.ceildiv(weight.shape[1], group_size)
+        n_float_per_int = storage_nbit // nbit
+        max_int_value = (1 << (nbit - 1)) - 1
+        assert group_size % n_float_per_int == 0
+
+        scale_min_shape = (weight.shape[0], n_group)
+        k = te.reduce_axis((0, group_size), name="k")
+        max_abs_value = te.compute(shape=scale_min_shape, fcompute=lambda i, j: te.max(tir.if_then_else(j * group_size + k < weight.shape[1], te.abs(weight[i, j * group_size + k]), tir.min_value(dtype)), axis=k), name="max_abs_value")
+
+        def f_compute_scale(i, j):
+            max_value = tir.max(max_abs_value[i, j], tir.const(1e-4, dtype))
+            return (max_value / tir.const(max_int_value, dtype))
+
+        scale = te.compute(shape=scale_min_shape, fcompute=f_compute_scale, name="scale")
+        storage_dtype = ("uint" + str(storage_nbit))
+
+        def f_scale_weight(i, j):
+            group_idx = j // group_size
+            w_scaled = tir.round(weight[i, j] / scale[i, group_idx] + tir.const(max_int_value, dtype))
+            w_scaled = T.min(T.max(w_scaled, tir.const(0, dtype)), tir.const(max_int_value * 2, dtype)).astype(storage_dtype)
+            return w_scaled
+
+        k = te.reduce_axis((0, n_float_per_int), name="k")
+        reducer = te.comm_reducer(fcombine=lambda x, y: tir.bitwise_or(x, y), fidentity=lambda dtype: tir.const(0, dtype), name="bitwise_or")
+        n_i32 = tir.ceildiv(group_size, n_float_per_int) * n_group
+        w_gathered = te.compute(shape=(weight.shape[0], n_i32), fcompute=lambda i, j: reducer(tir.if_then_else(j * n_float_per_int + k < weight.shape[1], f_scale_weight(i, j * n_float_per_int + k) << (k.astype(storage_dtype) * tir.const(nbit, storage_dtype)), tir.const(0, storage_dtype)), axis=k), name="w_gathered")
+
+        return w_gathered, scale
+
+    return te_encode_sym
+
+
 # fmt: on
 
 
@@ -189,6 +236,31 @@ class RowWiseQuantize:
                     )
                 return call
 
+            def emit_groupwise_encoding(self, x: relax.Expr) -> List[relax.Expr]:
+                encoded_data = self.builder_.emit_te(
+                    groupwise_encoding_func(
+                        32, # group size, hardcoded
+                        self.nbit,
+                        self.storage_nbit,
+                        dtype="float16"
+                    ),
+                    x,
+                    primfunc_name_hint="encode",
+                )
+
+                decode_args = []
+                decode_args.append(
+                    self.builder_.emit(relax.TupleGetItem(encoded_data, 0))
+                )
+                decode_args.append(
+                    self.builder_.emit(relax.TupleGetItem(encoded_data, 1))
+                )
+
+                for i, arg in enumerate(decode_args):
+                    decode_args[i] = self.builder_.emit(stop_lift_params(arg))
+                return decode_args
+
+
             def quantize_take(self, call: relax.Call):
                 if (
                     call.attrs.axis is not None
@@ -198,14 +270,15 @@ class RowWiseQuantize:
                 ):
                     return call
 
-                decode_args = self.emit_encoding(call.args[0], transpose=False)
+                decode_args = self.emit_groupwise_encoding(call.args[0])
                 decode_args += (call.args[1],)
                 return self.builder_.call_te(
                     decoding_after_taking_func(
+                        32,  # group size, hardcoded
                         self.nbit,
                         self.storage_nbit,
                         call.args[0].struct_info.shape[-1],
-                        dtype=self.dtype,
+                        dtype="float16",
                     ),
                     *decode_args,
                     primfunc_name_hint="take_decode"
@@ -216,8 +289,8 @@ class RowWiseQuantize:
 
                 if call.op == tvm.ir.Op.get("relax.matmul"):
                     return self.quantize_matmul(call)
-                # elif call.op == tvm.ir.Op.get("relax.take"):
-                #     return self.quantize_take(call)
+                elif call.op == tvm.ir.Op.get("relax.take"):
+                    return self.quantize_take(call)
                 else:
                     return call
 

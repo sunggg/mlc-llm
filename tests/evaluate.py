@@ -102,7 +102,7 @@ def deploy_to_pipeline(args) -> None:
             f"{args.model}-{args.quantization.name}-{args.device_name}.so",
         )
     )
-    vm = relax.VirtualMachine(ex, device)
+    vm = relax.VirtualMachine(ex, device, profile=True)
 
     seqlen = args.seqlen
     inputs = tvm.nd.array(
@@ -161,16 +161,18 @@ def deploy_to_pipeline(args) -> None:
         )
         cmp_instrument.time_eval_results.clear()
 
-        logits, kv_caches = vm["decode"](
-            first_sampled_token, second_seq_len_shape, kv_caches, const_params
-        )
-        print("======================= Decoding Profiling =======================")
-        print_as_table(
-            sorted(
-                cmp_instrument.time_eval_results.items(),
-                key=lambda x: -(x[1][0] * x[1][1]),
-            )
-        )
+        # logits, kv_caches = vm["decode"](
+        #     first_sampled_token, second_seq_len_shape, kv_caches, const_params
+        # )
+        # print("======================= Decoding Profiling =======================")
+        # print_as_table(
+        #     sorted(
+        #         cmp_instrument.time_eval_results.items(),
+        #         key=lambda x: -(x[1][0] * x[1][1]),
+        #     )
+        # )
+
+        print(vm.profile("decode", first_sampled_token, second_seq_len_shape, kv_caches, const_params))
 
 
 if __name__ == "__main__":
