@@ -6,16 +6,17 @@ from tvm.relax.testing import get_relax_matmul_module
 import mlc_llm
 from mlc_llm import utils
 from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
+from tvm.script import relax as R
 
 
 dtype = "float16"
 x_shape = (64, 64)
-y_shape = (128, 64)
+y_shape = (64, 64)
 
 # x_shape = (512, 4096)
 # y_shape = (4096, 4096)
 
-use_bias = True
+use_bias = False
 
 if use_bias:
     mod = get_relax_matmul_module(
@@ -24,6 +25,7 @@ if use_bias:
         dtype,
         transposed_y=True,
         bias_shape=(1, y_shape[0]),
+        residual_bin_op=R.add,
     )
 else:
     mod = get_relax_matmul_module(
@@ -31,6 +33,8 @@ else:
         y_shape,
         dtype,
         transposed_y=True,
+        activation=R.nn.silu,
+        residual_bin_op=R.multiply,
     )
 
 x = np.random.randn(*x_shape).astype("float16")
@@ -42,10 +46,8 @@ bias = np.random.randn(1, y_shape[0]).astype("float16")
 
 mod = mlc_llm.transform.RowWiseQuantize(dtype="float32")(mod)
 
-print(mod)
-
 mod = partition_for_cutlass(mod)
-
+print(mod)
 mod = relax.transform.RunCodegen(
     {"cutlass": {"sm": 80, "find_first_valid": False}},
 )(mod)
@@ -65,13 +67,6 @@ else:
 out_weight = packed_weight.numpy()
 out_scales = scales.numpy()
 
-# ref_weight_preprocessed = np.load("/home/masa/projects/ml/deploy/FasterTransformer/build-docker/weights_preprocessed.npy")
-# ref_weight = np.load("/home/masa/projects/ml/deploy/FasterTransformer/build-docker/weights_packed.npy")
-# ref_scales = np.load("/home/masa/projects/ml/deploy/FasterTransformer/build-docker/scales.npy")
-
-# print(np.max(np.abs(scales.numpy() - ref_scales)), np.mean(np.abs(scales.numpy() - ref_scales)))
-# print(np.max(np.abs(out_weight - ref_weight)), np.mean(np.abs(out_weight - ref_weight)))
-
 # print(mod_deploy.without_attr("external_mods").without_attr("const_name_to_constant"))
 
 dev = tvm.device("cuda", 0)
@@ -87,10 +82,16 @@ out = vm["main"](*inp).numpy()
 
 # ref = np.load("/home/masa/projects/ml/deploy/FasterTransformer/build-docker/out.npy")
 
+def sigmoid(x):
+    return 1.0 / (1 + np.exp(-x))
+
+def silu(x):
+    return x * sigmoid(x)
+
 if use_bias:
-    ref = np.dot(x, y.transpose()) + bias
+    ref = np.dot(x, y.transpose()) + bias + x
 else:
-    ref = np.dot(x, y.transpose())
+    ref = silu(np.dot(x, y.transpose())) * x
 
 print(np.max(np.abs(out - ref)), np.mean(np.abs(out - ref)))
 print(out)
