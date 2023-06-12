@@ -213,7 +213,7 @@ class RowWiseQuantize:
                     if (
                         call_arg.attrs.axes is not None
                         or call_arg.args[0].struct_info.ndim != 2
-                        or call_arg.args[0] not in self._params
+                        # or call_arg.args[0] not in self._params
                         or call.struct_info.dtype == "float32"
                     ):
                         return call
