@@ -271,20 +271,22 @@ class LlamaAttention(nn.Module):
         )
         past_key_value = (k_cache, v_cache)
         f_kv_cache_view = relax.extern("vm.builtin.attention_kv_cache_view")
-        key_states = nn.emit(
+        k_cache = nn.emit(
             relax.Call(
                 f_kv_cache_view,
-                args=[k_cache, kv_states_shape],
-                sinfo_args=[R.Tensor(kv_states_shape, kv_states_dtype)],
+                args=[k_cache, kv_cache_shape],
+                sinfo_args=[R.Tensor(kv_cache_shape, kv_states_dtype)],
             )
         )
-        value_states = nn.emit(
+        v_cache = nn.emit(
             relax.Call(
                 f_kv_cache_view,
-                args=[v_cache, kv_states_shape],
-                sinfo_args=[R.Tensor(kv_states_shape, kv_states_dtype)],
+                args=[v_cache, kv_cache_shape],
+                sinfo_args=[R.Tensor(kv_cache_shape, kv_states_dtype)],
             )
         )
+        key_states = nn.emit(reshape(k_cache, kv_states_shape))
+        value_states = nn.emit(reshape(v_cache, kv_states_shape))
 
         query_states = nn.emit(permute_dims(query_states, [0, 2, 1, 3]))
         key_states = nn.emit(permute_dims(key_states, [0, 2, 1, 3]))
