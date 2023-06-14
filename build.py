@@ -13,6 +13,7 @@ import mlc_llm
 from mlc_llm import utils
 from mlc_llm.relax_model import gpt_neox, llama, moss, rwkv
 from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
+from mlc_llm.transform import combine_parallel_transposed_matmul, fuse_split_rotary_embedding, rewrite_attention
 
 
 def _parse_args():
@@ -253,13 +254,12 @@ def mod_transform_before_build(
     use_cutlass = True
 
 
-    from mlc_llm.transform import rewrite_attention
-
-    from mlc_llm.transform import combine_parallel_transposed_matmul
     mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 3)
     mod["prefill"] = combine_parallel_transposed_matmul(mod["prefill"], 2)
     mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 3)
     mod["decode"] = combine_parallel_transposed_matmul(mod["decode"], 2)
+
+    mod = fuse_split_rotary_embedding(mod)
 
     if use_cutlass:
         mod["prefill"] = rewrite_attention(mod["prefill"])
@@ -278,7 +278,6 @@ def mod_transform_before_build(
 
     if use_cutlass:
         mod = partition_for_cutlass(mod)
-        print(mod)
         mod = relax.transform.RunCodegen(
             {"cutlass": {"sm": 80, "find_first_valid": False}},
             entry_functions=model_names
@@ -357,7 +356,7 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
                         work_dir=work_dir,
                         max_trials_global=2000,
                         max_trials_per_task=50,
-                        op_names=["rms_norm1", "silu", "split", "reshape"]
+                        op_names=["rms_norm1", "silu", "reshape"]
                     )
                 )
             passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
@@ -427,7 +426,6 @@ def main():
                 raise ValueError(f"Model {ARGS.model} not supported")
             mod = mod_transform_before_build(mod, params, ARGS)
             # print(mod.without_attr("external_mods").without_attr("const_name_to_constant"))
-            # return
 
             with open(cache_path, "wb") as outfile:
                 pickle.dump(mod, outfile)
