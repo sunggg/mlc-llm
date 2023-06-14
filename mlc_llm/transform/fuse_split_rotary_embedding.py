@@ -27,8 +27,8 @@ def split_rotary(
     for ax0, ax1, ax2 in T.grid(T.int64(1), T.int64(1), T.int64(4096)):
         with T.block("T_split"):
             v_ax0, v_ax1, v_ax2 = T.axis.remap("SSS", [ax0, ax1, ax2])
-            T.reads(A[v_ax0, v_ax1, v_ax2])
-            T.writes(T_split[v_ax0, v_ax1, v_ax2])
+            T.reads(A[v_ax0, v_ax1, v_ax2], A[v_ax0, v_ax1, v_ax2 + T.int64(4096)], A[v_ax0, v_ax1, v_ax2 + T.int64(8192)])
+            T.writes(T_split[v_ax0, v_ax1, v_ax2], T_split_1[v_ax0, v_ax1, v_ax2], T_split_2[v_ax0, v_ax1, v_ax2])
             T_split[v_ax0, v_ax1, v_ax2] = cos[n - T.int64(1), v_ax2 % 128] * A[
                 v_ax0, v_ax1, v_ax2
             ] + sin[n - T.int64(1), v_ax2 % 128] * T.Select(
@@ -37,12 +37,6 @@ def split_rotary(
                 A[v_ax0, v_ax1, v_ax2 + T.int64(64)]
                 * T.float16(-1),
             )
-
-    for ax0, ax1, ax2 in T.grid(T.int64(1), T.int64(1), T.int64(4096)):
-        with T.block("T_split_1"):
-            v_ax0, v_ax1, v_ax2 = T.axis.remap("SSS", [ax0, ax1, ax2])
-            T.reads(A[v_ax0, v_ax1, v_ax2 + T.int64(4096)])
-            T.writes(T_split_1[v_ax0, v_ax1, v_ax2])
             T_split_1[v_ax0, v_ax1, v_ax2] = cos[n - T.int64(1), v_ax2 % 128] * A[
                 v_ax0, v_ax1, v_ax2 + T.int64(4096)
             ] + sin[n - T.int64(1), v_ax2 % 128] * T.Select(
@@ -59,12 +53,6 @@ def split_rotary(
                 ]
                 * T.float16(-1),
             )
-
-    for ax0, ax1, ax2 in T.grid(T.int64(1), T.int64(1), T.int64(4096)):
-        with T.block("T_split_2"):
-            v_ax0, v_ax1, v_ax2 = T.axis.remap("SSS", [ax0, ax1, ax2])
-            T.reads(A[v_ax0, v_ax1, v_ax2 + T.int64(8192)])
-            T.writes(T_split_2[v_ax0, v_ax1, v_ax2])
             T_split_2[v_ax0, v_ax1, v_ax2] = A[v_ax0, v_ax1, v_ax2 + T.int64(8192)]
 
 
