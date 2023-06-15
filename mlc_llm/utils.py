@@ -100,7 +100,8 @@ def split_transform_deploy_mod(
             transform_func_name = name + "_transform_params"
     assert transform_func_name is not None
 
-    for gv, func in mod.functions.items():
+    for gv in mod.functions:
+        func = mod[gv]
         if isinstance(func, tvm.tir.PrimFunc):
             mod_transform[gv] = func
             mod_deploy[gv] = func
@@ -113,12 +114,15 @@ def split_transform_deploy_mod(
         mod_transform
     )
     mod_deploy = relax.transform.DeadCodeElimination(model_names)(mod_deploy)
+
+    # Copy the runtime module from external codegen
     mod_deploy = mod_deploy.with_attrs(
         {
             "external_mods": mod.get_attr("external_mods"),
             "const_name_to_constant": mod.get_attr("const_name_to_constant"),
         }
     )
+
     return mod_transform, mod_deploy
 
 

@@ -347,22 +347,12 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
         #     )
         work_dir = "work"
         passes = []
-
-        with tvm.target.Target("nvidia/geforce-rtx-3070"), tvm.transform.PassContext(opt_level=3):
-            if False:
-                passes.append(
-                    relax.transform.MetaScheduleTuneIRMod(
-                        params={},
-                        work_dir=work_dir,
-                        max_trials_global=2000,
-                        max_trials_per_task=50,
-                        op_names=["rms_norm1", "silu", "reshape", "softmax"]
-                    )
-                )
-            passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
-            passes.append(tvm.tir.transform.DefaultGPUSchedule())
-            passes.append(mlc_llm.transform.LiftTIRGlobalBufferAlloc())
-            passes.append(tvm.tir.transform.ForceNarrowIndexToInt32())
+        with tvm.target.Target("nvidia/nvidia-a10g"), tvm.transform.PassContext(opt_level=3):
+            if True:
+                passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
+                passes.append(tvm.tir.transform.DefaultGPUSchedule())
+                passes.append(mlc_llm.transform.LiftTIRGlobalBufferAlloc())
+                passes.append(tvm.tir.transform.ForceNarrowIndexToInt32())
 
             mod_deploy = tvm.transform.Sequential(passes)(mod_deploy)
 
