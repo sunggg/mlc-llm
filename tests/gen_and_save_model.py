@@ -1,9 +1,8 @@
 from cohere.models import base_medium as cohere_medium
 from utils import get_tokenizer
 import torch
-from transformers import GenerationConfig, GPT2Config, AutoTokenizer, GPT2LMHeadModel
 
-tokenizer = get_tokenizer("cohere-gpt-medium")
+tokenizer = get_tokenizer("cohere-gpt2-medium")
 tokenizer.pad_token_id = tokenizer.eos_token_id
 torch_device = "cuda"
 
@@ -13,5 +12,5 @@ model = cohere_medium(
 )
 
 state_dict = model.state_dict()
-torch.save(state_dict, "medium/pytorch_model.bin")
-print("model saves to medium/pytorch_model.bin")
+torch.save(state_dict, "dist/models/cohere-gpt2-medium/pytorch_model.bin")
+print("model saves to dist/models/cohere-gpt2-medium/pytorch_model.bin")

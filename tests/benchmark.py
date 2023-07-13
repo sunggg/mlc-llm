@@ -6,15 +6,12 @@ import argparse
 import numpy as np
 
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 import tvm
 from mlc_llm import utils
-from mlc_llm.conversation import SeparatorStyle, conv_templates, compute_skip_echo_len
 from utils import get_tokenizer, get_pytorch_model, get_tvm_model, sample_top_p
-from cohere.models import base_medium as cohere_medium
-from cohere.models import base_xlarge as cohere_xlarge
-
+from cohere.models import base_medium as cohere_medium, base_xlarge as cohere_xlarge
 
 class Colors:
     HEADER = "\033[95m"
@@ -31,6 +28,12 @@ class Colors:
 # NOTE: "all" is currently not supported due to GPU OOM issue in creating multiple model wrappers.
 BENCHMARK_MODES = ["tvm", "torch-eager", "torch-inductor", "llama-cpp"]
 
+def instrument_nvtx_range(func, name, before_run, *args):
+    if before_run:
+        torch.cuda.nvtx.range_push(f"{name}")
+    else:
+        torch.cuda.nvtx.range_pop()
+
 
 def _parse_args():
     args = argparse.ArgumentParser()
@@ -45,14 +48,10 @@ def _parse_args():
     args.add_argument(
         "--quantization",
         type=str,
-        choices=[*utils.quantization_dict.keys()],
-        default=list(utils.quantization_dict.keys())[0],
+        choices=[*utils.quantization_schemes.keys()],
+        default=list(utils.quantization_schemes.keys())[0],
     )
-    args.add_argument(
-        "--prompt",
-        type=str,
-        default="Repeat the following paragraph exactly: Carlos Alcaraz is a professional tennis player from Spain. He was born on April 12, 1997, and has been playing tennis since he was a child. Alcaraz is known for his aggressive playing style and his ability to come back from difficult situations. He has won several junior tournaments and has also played on the ATP Tour. Alcaraz He has a career high ranking in men’s singles by the Association of Tennis Professionals of world No. 1 achieved on 12 September 2022. He is currently ranked world No. 2 by the ATP. He is known for his strong serve and powerful groundstrokes. He is also known for his positive attitude and his determination to succeed on the court.",
-    )
+    args.add_argument("--prompt", type=str, default="Repeat the following paragraph exactly: Carlos Alcaraz is a professional tennis player from Spain. He was born on April 12, 1997, and has been playing tennis since he was a child. Alcaraz is known for his aggressive playing style and his ability to come back from difficult situations. He has won several junior tournaments and has also played on the ATP Tour. Alcaraz He has a career high ranking in men’s singles by the Association of Tennis Professionals of world No. 1 achieved on 12 September 2022. He is currently ranked world No. 2 by the ATP. He is known for his strong serve and powerful groundstrokes. He is also known for his positive attitude and his determination to succeed on the court.")
     args.add_argument("--device-name", type=str, default="auto")
     args.add_argument("--artifact-path", type=str, default="dist")
     args.add_argument("--ggml-file-name", type=str, default="ggml-model-f16.bin")
@@ -68,14 +67,14 @@ def _parse_args():
     args.add_argument("--num-measurements", type=int, default=10)
     args.add_argument("--num-input-tokens", type=int, default=32)
     args.add_argument("--num-output-tokens", type=int, default=32)
-    args.add_argument("--debug", action="store_true", default=False)
 
     parsed = args.parse_args()
     utils.argparse_postproc_common(parsed)
 
     parsed.model_path = os.path.join(parsed.artifact_path, "models", parsed.model)
     parsed.artifact_path = os.path.join(
-        parsed.artifact_path, f"{parsed.model}-{parsed.quantization.name}"
+        parsed.artifact_path,
+        f"{parsed.model}-{parsed.quantization.name}"
     )
     parsed.ggml_file_path = os.path.join(parsed.model_path, parsed.ggml_file_name)
     return parsed
@@ -165,18 +164,14 @@ class TvmModelWrapper(ModelWrapper):
         )
 
         start_pos = num_input_tokens
+        next_token = None
+
         for cur_pos in range(start_pos, total_len):
             if cur_pos == start_pos:
-                # TODO: switch to the below when Eric's PR is merged.
-                # tok = tvm.nd.from_dlpack(tokens[:, :cur_pos])
-                tok = tvm.nd.array(tokens[:, :cur_pos].cpu().numpy(), self.tvm_device)
+                tok = tvm.nd.from_dlpack(tokens[:, :cur_pos])
                 logits = self.model(tok)
             else:
-                # TODO: switch to the below when Eric's PR is merged.
-                # tok = tvm.nd.from_dlpack(tokens[:, cur_pos - 1 : cur_pos])
-                tok = tvm.nd.array(
-                    tokens[:, cur_pos - 1 : cur_pos].cpu().numpy(), self.tvm_device
-                )
+                tok = tvm.nd.from_dlpack(next_token)
                 logits = self.model(tok)
 
             # NOTE:
@@ -204,9 +199,8 @@ class TvmModelWrapper(ModelWrapper):
 
             logits = logits[:, -1, :]
             # Use greedy
-            next_token = torch.argmax(logits, dim=-1)
-            next_token = next_token.reshape(-1)
-            tokens[:, cur_pos] = next_token
+            next_token = torch.argmax(logits, dim=-1, keepdim=True).to(torch.int32)
+
 
     def generate(
         self,
@@ -235,15 +229,15 @@ class TvmModelWrapper(ModelWrapper):
         for cur_pos in range(start_pos, total_len):
             if cur_pos == start_pos:
                 # TODO: switch to the below when Eric's PR is merged.
-                #    tok = tvm.nd.from_dlpack(tokens[:, :cur_pos])
-                tok = tvm.nd.array(tokens[:, :cur_pos].cpu().numpy(), self.tvm_device)
+                tok = tvm.nd.from_dlpack(tokens[:, :cur_pos])
+                #tok = tvm.nd.array(tokens[:, :cur_pos].numpy(), self.tvm_device)
                 logits = self.model(tok)
             else:
                 # TODO: switch to the below when Eric's PR is merged.
-                #    tok = tvm.nd.from_dlpack(tokens[:, cur_pos - 1 : cur_pos])
-                tok = tvm.nd.array(
-                    tokens[:, cur_pos - 1 : cur_pos].cpu().numpy(), self.tvm_device
-                )
+                tok = tvm.nd.from_dlpack(tokens[:, cur_pos - 1 : cur_pos])
+                #tok = tvm.nd.array(
+                #    tokens[:, cur_pos - 1 : cur_pos].numpy(), self.tvm_device
+                #)
                 logits = self.model(tok)
 
             # NOTE:
@@ -315,18 +309,24 @@ class TorchModelWrapper(ModelWrapper):
         if from_hugging_face:
             model = AutoModelForCausalLM.from_pretrained(model_path)
         else:
-            if "cohere-gpt-medium" in self.model_path:
-                model = cohere_medium(
-                    dev=self.torch_device,
-                    dtype=(torch.float16 if dtype == "float16" else torch.float32),
-                )
-            elif "cohere-gpt-xlarge" in self.model_path:
-                model = cohere_xlarge(
-                    dev=self.torch_device,
-                    dtype=(torch.float16 if dtype == "float16" else torch.float32),
-                )
+            assert dtype == "float16"
+            if "cohere-" in self.model_path:
+                if "cohere-gpt2-medium" in self.model_path:
+                    model = cohere_medium(
+                        dev="cuda",
+                        dtype=torch.float16,
+                    )
+                elif "cohere-gpt2-xlarge" in self.model_path:
+                    model = cohere_xlarge(
+                        dev="cuda",
+                        dtype=torch.float16,
+                    )
+                model_weights = os.path.join(model_path, "pytorch_model.bin")
+                model = model.to("cpu")
+                model.load_state_dict(torch.load(model_weights))
             else:
                 raise NotImplementedError
+        
         model.eval()
         if dtype == "float16":
             model = model.to(torch.float16)
@@ -351,14 +351,9 @@ class TorchModelWrapper(ModelWrapper):
         past_key_values = None
         for cur_pos in range(num_input_tokens, total_len):
             if cur_pos == num_input_tokens:
-                logits, past_key_values = self.model(
-                    inputs=tokens[:, :cur_pos], past_key_values=past_key_values
-                )
+                logits, past_key_values = self.model(inputs=tokens[:, :cur_pos], past_key_values=past_key_values)
             else:
-                logits, past_key_values = self.model(
-                    inputs=tokens[:, cur_pos - 1 : cur_pos],
-                    past_key_values=past_key_values,
-                )
+                logits, past_key_values = self.model(inputs=tokens[:, cur_pos - 1 : cur_pos], past_key_values=past_key_values)
 
             if skip_sampling:
                 continue
@@ -389,14 +384,9 @@ class TorchModelWrapper(ModelWrapper):
         past_key_values = None
         for cur_pos in range(start_pos, total_len):
             if cur_pos == start_pos:
-                logits, past_key_values = self.model(
-                    inputs=tokens[:, :cur_pos], past_key_values=past_key_values
-                )
+                logits, past_key_values = self.model(inputs=tokens[:, :cur_pos], past_key_values=past_key_values)
             else:
-                logits, past_key_values = self.model(
-                    inputs=tokens[:, cur_pos - 1 : cur_pos],
-                    past_key_values=past_key_values,
-                )
+                logits, past_key_values = self.model(inputs=tokens[:, cur_pos - 1 : cur_pos], past_key_values=past_key_values)
             logits = logits[:, -1, :]
             if temperature > 0:
                 probs = torch.softmax((logits / temperature).to(torch.float32), dim=-1)
@@ -421,8 +411,8 @@ class TorchModelWrapper(ModelWrapper):
             if stopped:
                 break
 
-
 class LlamaCppModelWrapper(ModelWrapper):
+
     name: str = "llama_cpp_model_wrapper"  # name of the model wrapper
     ggml_file_path: str  # path to the ggml model binary path
     model: "Llama"  # llama model object
@@ -452,7 +442,6 @@ class LlamaCppModelWrapper(ModelWrapper):
         verbose: bool = True,
     ):
         from llama_cpp import Llama, llama_token
-
         super().__init__(tokenizer, max_gen_len, conv_template)
 
         self.name = f"llama_cpp_model_wrapper"
@@ -511,61 +500,7 @@ class LlamaCppModelWrapper(ModelWrapper):
         return iter(output)
 
 
-# Benchmark single-round conv
-def benchmark_e2e_chat(model_wrapper, prompt, enable_print=False):
-    conv = conv_templates[model_wrapper.conv_template].copy()
-    keep_first_token = True
-
-    conv.append_message(conv.roles[0], prompt)
-    conv.append_message(conv.roles[1], None)
-    prompt = conv.get_prompt()
-
-    model_wrapper.sync()
-    t0 = time.time()
-    prompt_tokens = model_wrapper.tokenizer.encode(prompt)
-    if not keep_first_token:
-        prompt_tokens = prompt_tokens[1:]
-
-    pre = 0
-    skip_echo_len = compute_skip_echo_len(model_wrapper.conv_template, conv, prompt)
-    outputs = None
-    for outputs in model_wrapper.generate(
-        prompt_tokens,
-        temperature=0,  # Use greedy to make it deterministic for benchmarking
-        stop_str=conv.sep if conv.sep_style == SeparatorStyle.SINGLE else conv.sep2,
-        # stream_interval=2048,  # To output at once
-    ):
-        outputs = outputs[skip_echo_len:].strip()
-        outputs = outputs.split(" ")
-        now = len(outputs)
-        if now - 1 > pre:
-            if enable_print:
-                print(
-                    Colors.OKBLUE + " ".join(outputs[pre : now - 1]) + Colors.ENDC,
-                    end=" ",
-                    flush=True,
-                )
-            pre = now - 1
-    if enable_print:
-        print(
-            Colors.OKBLUE + " ".join(outputs[pre:]) + Colors.ENDC,
-            flush=True,
-        )
-
-    model_wrapper.sync()
-    t1 = time.time()
-    assert now == len(outputs)
-    elapsed = t1 - t0
-    num_input_prompt_tokens, num_decoded_output_tokens = len(prompt_tokens), len(
-        outputs
-    )
-
-    return num_input_prompt_tokens, num_decoded_output_tokens, elapsed
-
-
-def benchmark_core_chat(
-    model_wrapper, num_input_tokens, num_output_tokens, skip_sampling
-):
+def benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip_sampling):
     # Clear kv cache and prepare the model
     model_wrapper.prep_model(num_input_tokens, num_output_tokens)
     model_wrapper.sync()
@@ -587,18 +522,18 @@ def benchmark(
 ):
     # Warm-up
     for _ in range(num_warm_up):
-        benchmark_core_chat(
-            model_wrapper, num_input_tokens, num_output_tokens, skip_sampling
-        )
+        benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip_sampling)
 
     # Actual measurement
     elapsed = []
+    torch.cuda.cudart().cudaProfilerStart()
     for _ in range(num_measurement):
+        torch.cuda.nvtx.range_push(f"iteration")
         elapsed.append(
-            benchmark_core_chat(
-                model_wrapper, num_input_tokens, num_output_tokens, skip_sampling
-            )
+            benchmark_core_chat(model_wrapper, num_input_tokens, num_output_tokens, skip_sampling)
         )
+        torch.cuda.nvtx.range_pop()
+    torch.cuda.cudart().cudaProfilerStop()
     elapsed = [np.percentile(elapsed, p) for p in percentiles]
     tok_per_sec = [num_output_tokens / e for e in elapsed]
     return elapsed, tok_per_sec
@@ -615,6 +550,7 @@ def get_model_wrapper(mode, tokenizer, ARGS):
             ARGS.quantization.name,
             ARGS.quantization.model_dtype,
             tvm_device=ARGS.device_name,
+            torch_device="cuda", # TODO: change to "cuda" when dlpack conversion works.
         )
     elif mode.startswith("torch-"):
         return TorchModelWrapper(
@@ -633,10 +569,11 @@ def get_model_wrapper(mode, tokenizer, ARGS):
     raise ValueError(f"Unknown mode {mode}")
 
 
+
+
+
 if __name__ == "__main__":
     ARGS = _parse_args()
-    if ARGS.debug:
-        torch.manual_seed(0)
     # Torch setup
     torch.set_float32_matmul_precision("high")
 
@@ -660,7 +597,7 @@ if __name__ == "__main__":
             ARGS.num_warm_up,
             ARGS.num_measurements,
             percentiles=percentiles,
-            skip_sampling=ARGS.skip_sampling,
+            skip_sampling=ARGS.skip_sampling
         )
 
         print("|{:^15}|{:^12}|{:^12}|".format("mode", "seqlen", "genlen"), end="")
