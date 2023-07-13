@@ -14,7 +14,7 @@ from .transform import ReorderTransformFunc
 
 
 supported_model_types = set(
-    ["llama", "gpt_neox", "gpt_bigcode", "minigpt", "moss", "rwkv", "gptj"]
+    ["llama", "gpt_neox", "gpt_bigcode", "minigpt", "moss", "rwkv", "gptj", "gpt2"]
 )
 
 
@@ -206,14 +206,25 @@ def transform_params(
             torch_param_names = list(torch_params.keys())
             for torch_param_name in torch_param_names:
                 if str(torch_params[torch_param_name].dtype) == "torch.bfloat16":
-                    if args.quantization.mode == "no" and args.quantization.model_dtype == "float16":
+                    if (
+                        args.quantization.mode == "no"
+                        and args.quantization.model_dtype == "float16"
+                    ):
                         raw_param = (
-                            torch_params[torch_param_name].detach().cpu().to(dtype=torch.float16).numpy()
+                            torch_params[torch_param_name]
+                            .detach()
+                            .cpu()
+                            .to(dtype=torch.float16)
+                            .numpy()
                         )
                     else:
                         # Convert to float32 first.
                         raw_param = (
-                            torch_params[torch_param_name].detach().cpu().float().numpy()
+                            torch_params[torch_param_name]
+                            .detach()
+                            .cpu()
+                            .float()
+                            .numpy()
                         )
                 else:
                     raw_param = torch_params[torch_param_name].detach().cpu().numpy()

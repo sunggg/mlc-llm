@@ -12,7 +12,7 @@ from tvm import relax
 
 import mlc_llm
 from mlc_llm import utils
-from mlc_llm.relax_model import gpt_bigcode, gpt_neox, llama, minigpt, gptj, rwkv
+from mlc_llm.relax_model import gpt_bigcode, gpt_neox, llama, minigpt, gptj, rwkv, gpt2
 
 
 def _parse_args():
@@ -157,7 +157,7 @@ def _setup_model_path(args):  # pylint: disable=too-many-branches
     elif args.model != "auto":
         if os.path.isdir(args.model):
             args.model_path = args.model
-            args.model = os.path.basename(args.model)
+            args.model = os.path.basename(os.path.normpath((args.model)))
         else:
             args.model_path = os.path.join(args.artifact_path, "models", args.model)
         validate_config(args.model_path)
@@ -426,6 +426,8 @@ def main():
             mod, params = gptj.get_model(ARGS, config)
         elif ARGS.model_category == "rwkv":
             mod, params = rwkv.get_model(ARGS, config)
+        elif ARGS.model_category == "gpt2":
+            mod, params = gpt2.get_model(ARGS, config)
         else:
             raise ValueError(f"Model {ARGS.model} not supported")
         mod = mod_transform_before_build(mod, params, ARGS)
