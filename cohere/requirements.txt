@@ -1,0 +1,7 @@
+transformers
+tokenizers
+
+ipykernel # dev
+
+--extra-index-url https://download.pytorch.org/whl/cu117
+torch
