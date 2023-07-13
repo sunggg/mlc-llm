@@ -163,6 +163,7 @@ class Conv1D(nn.Module):
             dtype=dtype,
             name="conv1d_bias",
         )
+        self.dtype = dtype
 
     def forward(self, input: relax.Expr) -> relax.Var:
         return nn.emit(
