@@ -283,7 +283,8 @@ class GPT2Attention(nn.Module):
                     args=[
                         k_cache,
                         reshape(
-                            k, (batch_size * seq_len, self.num_heads, self.head_dim)
+                            permute_dims(k, [1, 0, 2, 3]),
+                            (seq_len, batch_size * self.num_heads, self.head_dim),
                         ),
                     ],
                     sinfo_args=[relax.ObjectStructInfo()],
@@ -295,15 +296,16 @@ class GPT2Attention(nn.Module):
                     args=[
                         v_cache,
                         reshape(
-                            v, (batch_size * seq_len, self.num_heads, self.head_dim)
+                            permute_dims(v, [1, 0, 2, 3]),
+                            (seq_len, batch_size * self.num_heads, self.head_dim),
                         ),
                     ],
                     sinfo_args=[relax.ObjectStructInfo()],
                 )
             )
             batch_size, _, num_heads, head_size = k.struct_info.shape
-            kv_cache_shape = R.shape([batch_size * kv_seq_len, num_heads, head_size])
-            kv_states_shape = R.shape([batch_size, kv_seq_len, num_heads, head_size])
+            kv_cache_shape = R.shape([kv_seq_len, batch_size * num_heads, head_size])
+            kv_states_shape = R.shape([kv_seq_len, batch_size, num_heads, head_size])
             k = nn.emit(
                 relax.Call(
                     f_kv_cache_view,
@@ -318,8 +320,8 @@ class GPT2Attention(nn.Module):
                     sinfo_args=[R.Tensor(kv_cache_shape, v.struct_info.dtype)],
                 )
             )
-            k = nn.emit(reshape(k, kv_states_shape))
-            v = nn.emit(reshape(v, kv_states_shape))
+            k = nn.emit(permute_dims(reshape(k, kv_states_shape), [1, 0, 2, 3]))
+            v = nn.emit(permute_dims(reshape(v, kv_states_shape), [1, 0, 2, 3]))
             past_key_value = (k_cache, v_cache)
         else:
             past_key_value = (None, None)
@@ -627,8 +629,8 @@ def create_kv_cache_func(
 ) -> None:
     init_shape = relax.ShapeExpr(
         (
-            batch_size * config.max_sequence_length,
-            config.n_head,
+            config.max_sequence_length,
+            batch_size * config.n_head,
             config.n_embd // config.n_head,
         )
     )
