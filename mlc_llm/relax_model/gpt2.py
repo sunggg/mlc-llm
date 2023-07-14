@@ -280,19 +280,29 @@ class GPT2Attention(nn.Module):
             k_cache = nn.emit(
                 relax.Call(
                     f_kv_cache_append,
-                    args=[k_cache, squeeze(k, axis=0)],
+                    args=[
+                        k_cache,
+                        reshape(
+                            k, (batch_size * seq_len, self.num_heads, self.head_dim)
+                        ),
+                    ],
                     sinfo_args=[relax.ObjectStructInfo()],
                 )
             )
             v_cache = nn.emit(
                 relax.Call(
                     f_kv_cache_append,
-                    args=[v_cache, squeeze(v, axis=0)],
+                    args=[
+                        v_cache,
+                        reshape(
+                            v, (batch_size * seq_len, self.num_heads, self.head_dim)
+                        ),
+                    ],
                     sinfo_args=[relax.ObjectStructInfo()],
                 )
             )
             batch_size, _, num_heads, head_size = k.struct_info.shape
-            kv_cache_shape = R.shape([kv_seq_len, num_heads, head_size])
+            kv_cache_shape = R.shape([batch_size * kv_seq_len, num_heads, head_size])
             kv_states_shape = R.shape([batch_size, kv_seq_len, num_heads, head_size])
             k = nn.emit(
                 relax.Call(
@@ -478,9 +488,9 @@ class GPT2ForCausalLM(nn.Module):
         )
 
         def te_slice_last(x: te.Tensor):
-            _, seq_len, n_embd = x.shape
+            bsz, seq_len, n_embd = x.shape
             return te.compute(
-                shape=(1, 1, n_embd),
+                shape=(bsz, 1, n_embd),
                 fcompute=lambda i, _, k: x[i, seq_len - 1, k],
                 name="slice_last",
             )
@@ -519,10 +529,11 @@ def create_encoding_func(
     param_manager: ParamManager,
     config: GPT2Config,
     quant_scheme: QuantizationScheme,
+    batch_size: int,
 ) -> None:
     func_name = "prefill"
 
-    batch_size = tvm.tir.IntImm("int64", 1)
+    batch_size = tvm.tir.IntImm("int64", batch_size)
     seq_len = tvm.tir.Var("n", "int64")
     all_seq_len = tvm.tir.Var("m", "int64")
     with bb.function(func_name):
@@ -568,10 +579,11 @@ def create_decoding_func(
     param_manager: ParamManager,
     config: GPT2Config,
     quant_scheme: QuantizationScheme,
+    batch_size: int,
 ) -> None:
     func_name = "decode"
 
-    bsz = tvm.tir.IntImm("int64", 1)
+    bsz = tvm.tir.IntImm("int64", batch_size)
     seq_len = tvm.tir.IntImm("int64", 1)
     all_seq_len = tvm.tir.Var("n", "int64")
 
@@ -610,10 +622,12 @@ def create_decoding_func(
     bb.update_func(gv, mod[gv].with_attr("num_input", 3))
 
 
-def create_kv_cache_func(bb: relax.BlockBuilder, config: GPT2Config) -> None:
+def create_kv_cache_func(
+    bb: relax.BlockBuilder, config: GPT2Config, batch_size: int
+) -> None:
     init_shape = relax.ShapeExpr(
         (
-            config.max_sequence_length,
+            batch_size * config.max_sequence_length,
             config.n_head,
             config.n_embd // config.n_head,
         )
@@ -654,6 +668,7 @@ def get_model(args: argparse.Namespace, hf_config):
     model = args.model
     dtype = args.quantization.model_dtype
     max_seq_len = args.max_seq_len
+    batch_size = args.batch_size
 
     config = GPT2Config(
         **hf_config,
@@ -666,9 +681,9 @@ def get_model(args: argparse.Namespace, hf_config):
 
     param_manager = ParamManager()
     bb = relax.BlockBuilder()
-    create_encoding_func(bb, param_manager, config, args.quantization)
-    create_decoding_func(bb, param_manager, config, args.quantization)
-    create_kv_cache_func(bb, config)
+    create_encoding_func(bb, param_manager, config, args.quantization, batch_size)
+    create_decoding_func(bb, param_manager, config, args.quantization, batch_size)
+    create_kv_cache_func(bb, config, batch_size)
     create_softmax_func(bb, config)
     create_metadata_func(
         bb,

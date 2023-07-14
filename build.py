@@ -38,6 +38,7 @@ def _parse_args():
         default=list(utils.quantization_schemes.keys())[0],
     )
     args.add_argument("--max-seq-len", type=int, default=-1)
+    args.add_argument("--batch-size", type=int, default=1)
     args.add_argument("--target", type=str, default="auto")
     args.add_argument(
         "--db-path",
