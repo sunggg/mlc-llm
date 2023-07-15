@@ -16,7 +16,41 @@ from .relax_model import param_manager
 supported_model_types = set(
     ["llama", "gpt_neox", "gpt_bigcode", "minigpt", "moss", "rwkv", "gptj"]
 )
+from dataclasses import dataclass
 
+@dataclass
+class Quantization:
+    """Class denoting the quantization options"""
+
+    name: str
+    mode: str
+    sym: bool
+    storage_nbit: int
+    model_dtype: str
+
+quantization_dict = {
+    "q3f16_0": Quantization(
+        name="q3f16_0", mode="int3", sym=True, storage_nbit=16, model_dtype="float16"
+    ),
+    "q4f16_0": Quantization(
+        name="q4f16_0", mode="int4", sym=True, storage_nbit=32, model_dtype="float16"
+    ),
+    "q4f16_1": Quantization(
+        name="q4f16_1", mode="int4", sym=True, storage_nbit=32, model_dtype="float16"
+    ),
+    "q4f32_0": Quantization(
+        name="q4f32_0", mode="int4", sym=False, storage_nbit=32, model_dtype="float32"
+    ),
+    "q0f32": Quantization(
+        name="q0f32", mode="no", sym=False, storage_nbit=-1, model_dtype="float32"
+    ),
+    "q0f16": Quantization(
+        name="q0f16", mode="no", sym=False, storage_nbit=-1, model_dtype="float16"
+    ),
+    "q8f16_0": Quantization(
+        name="q8f16_0", mode="uint8", sym=False, storage_nbit=-1, model_dtype="float16"
+    ),
+}
 
 def argparse_postproc_common(args: argparse.Namespace) -> None:
     if hasattr(args, "device_name"):
