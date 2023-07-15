@@ -10,6 +10,7 @@ from tvm import dlight
 from tvm import meta_schedule as ms
 from tvm import relax
 from tvm import dlight as dl
+from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 
 import mlc_llm
 from mlc_llm import utils
@@ -22,6 +23,7 @@ from mlc_llm.relax_model import (
     param_manager,
     rwkv,
 )
+from mlc_llm.transform import fuse_split_rotary_embedding, rewrite_attention
 
 
 def _parse_args():
@@ -277,6 +279,7 @@ def mod_transform_before_build(
     param_manager: param_manager.ParamManager,
     model_params: List[Optional[tvm.nd.NDArray]],
     args: argparse.Namespace,
+    config,
 ) -> tvm.IRModule:
     """First-stage: Legalize ops and trace"""
     if ARGS.model.startswith("rwkv-"):
@@ -302,6 +305,17 @@ def mod_transform_before_build(
     assert "transform_params" in [gv.name_hint for gv in mod.get_global_vars()]
 
     mod = mlc_llm.transform.FuseDecodeTranspose()(mod)  # pylint: disable=not-callable
+
+    mod = fuse_split_rotary_embedding(mod, config["num_hidden_layers"])
+    mod["prefill"] = rewrite_attention(mod["prefill"])
+    mod["decode"] = rewrite_attention(mod["decode"])
+
+    mod = partition_for_cutlass(mod)
+    mod = relax.transform.RunCodegen(
+        {"cutlass": {"sm": 80, "find_first_valid": False}},
+        entry_functions=model_names + ["transform_params"]
+    )(mod)
+
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
     mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
     mod = mlc_llm.transform.FuseDecodeMatmulEwise(  # pylint: disable=not-callable
@@ -432,7 +446,10 @@ def main():
             mod, param_manager, params = rwkv.get_model(ARGS, config)
         else:
             raise ValueError(f"Model {ARGS.model} not supported")
-        mod = mod_transform_before_build(mod, param_manager, params, ARGS)
+        mod = mod_transform_before_build(mod, param_manager, params, ARGS, config)
+        # print(mod.without_attr("external_mods").without_attr("const_name_to_constant"))
+        # return
+
         with open(cache_path, "wb") as outfile:
             pickle.dump(mod, outfile)
         print(f"Save a cached module to {cache_path}.")
