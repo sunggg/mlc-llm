@@ -29,8 +29,8 @@ def _parse_args():
     args.add_argument(
         "--quantization",
         type=str,
-        choices=[*utils.quantization_dict.keys()],
-        default=list(utils.quantization_dict.keys())[0],
+        choices=[*utils.quantization_schemes.keys()],
+        default=list(utils.quantization_schemes.keys())[0],
     )
     args.add_argument("--device-name", type=str, default="auto")
     args.add_argument("--debug-dump", action="store_true", default=False)
