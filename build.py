@@ -309,7 +309,29 @@ def mod_transform_before_build(
     mod["prefill"] = rewrite_attention(mod["prefill"])
     mod["decode"] = rewrite_attention(mod["decode"])
 
-    mod = partition_for_cutlass(mod)
+    # for best performance on fp16, offload to cublas
+    if args.quantization.name.startswith("q0"):
+        from tvm.relax.backend import get_patterns_with_prefix
+        from tvm.relax.backend.contrib.cutlass import annotate_workspace
+        import tvm.relax.backend.contrib.cublas
+
+        patterns_to_use = []
+        patterns_to_use += get_patterns_with_prefix("cutlass.attention")
+        patterns_to_use += get_patterns_with_prefix("cublas")
+        patterns_to_use += get_patterns_with_prefix("cutlass")
+
+        partition_pass = relax.transform.FuseOpsByPattern(
+            patterns_to_use,
+            bind_constants=False,
+            annotate_codegen=True,
+        )
+        mod = partition_pass(mod)
+        mod = annotate_workspace(mod)
+        mod = relax.transform.AllocateWorkspace()(mod)
+    else:
+        mod = partition_for_cutlass(mod)
+    
+
     mod = relax.transform.RunCodegen(
         {"cutlass": {"sm": 80, "find_first_valid": False}},
         entry_functions=model_names + ["transform_params"]
