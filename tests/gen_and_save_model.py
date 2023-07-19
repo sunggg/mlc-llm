@@ -2,7 +2,7 @@ import torch
 import json
 import os
 from cohere.models import base_medium as cohere_medium, base_xlarge as cohere_xlarge
-
+from transformers import AutoTokenizer
 
 torch.manual_seed(0)
 
@@ -17,11 +17,15 @@ def _dump_config(config, model_dir):
     config_path = os.path.join(model_dir, "config.json")
     with open(config_path, 'w') as config_file:
         json.dump(config, config_file, indent=2)
+    # dump tokenizer config files
+    tokenizer = AutoTokenizer.from_pretrained("gpt2-xl")
+    tokenizer.save_pretrained(model_dir)
     print("config saved to ", config_path)
 
 
 def gen_model(model, config, name):
     model_dir = os.path.join("dist", "models", name)
+    os.makedirs(model_dir, exist_ok=True)
     _dump_model(model, model_dir)
     _dump_config(config, model_dir)
 
@@ -80,12 +84,12 @@ config_xlarge = {'activation_function': 'gelu',
     'vocab_size': 51200
 }
 
-model = cohere_medium(dev="cuda", dtype=torch.float16)
+model = cohere_medium()
 gen_model(model, config_medium, "cohere-gpt2-medium")
 del model
 
-# uncomment the following to create 52B model
-# model = cohere_xlarge(dev="cuda", dtype=torch.float16)
+# uncomment the following to create 52B model. Takes ~8 min to generate model
+# model = cohere_xlarge()
 # gen_model(model, config_xlarge, "cohere-gpt2-xlarge")
 # del model
 

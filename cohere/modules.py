@@ -21,8 +21,6 @@ class Conv1D(nn.Module):
         self.nf = nf
         self.weight = nn.Parameter(torch.empty(nx, nf, **kwargs))
         self.bias = nn.Parameter(torch.zeros(nf, **kwargs))
-        # TODO we don't need it?
-        nn.init.normal_(self.weight, std=0.02)
 
     def forward(self, x):
         size_out = x.size()[:-1] + (self.nf,)
