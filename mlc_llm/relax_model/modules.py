@@ -92,12 +92,10 @@ class LayerNorm(nn.Module):
     ):
         super().__init__()
         self.eps = eps
-        self.weight = nn.Parameter((hidden_size,), dtype="float32", name="weight")
-        self.bias = nn.Parameter((hidden_size,), dtype="float32", name="bias")
+        self.weight = nn.Parameter((hidden_size,), dtype="float16", name="weight")
+        self.bias = nn.Parameter((hidden_size,), dtype="float16", name="bias")
 
     def forward(self, x: relax.Expr) -> relax.Var:
-        if x.struct_info.dtype != "float32":
-            x = nn.emit(relax.op.astype(x, "float32"))
         x = nn.emit(
             layer_norm(
                 x,
