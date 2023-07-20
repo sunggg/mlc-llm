@@ -606,13 +606,14 @@ if __name__ == "__main__":
             skip_sampling=ARGS.skip_sampling
         )
 
-        print("|{:^15}|{:^12}|{:^12}|".format("mode", "seqlen", "genlen"), end="")
+        print("|{:^15}|{:^12}|{:^12}|{:^12}|".format("mode", "batch", "seqlen", "genlen"), end="")
         for p in percentiles:
             print("{:^12}|{:^12}|".format(f"p{p}: sec", f"p{p}: tok/s"), end="")
         print("")
         print(
-            "|{:^15}|{:^12}|{:^12}|".format(
+            "|{:^15}|{:^12}|{:^12}|{:^12}|".format(
                 ARGS.benchmark_mode,
+                ARGS.batch_size,
                 num_input_tokens,
                 num_output_tokens,
             ),
