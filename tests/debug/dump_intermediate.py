@@ -124,11 +124,6 @@ def _parse_args():
     args.add_argument("--skip-rounds", type=int, default=0)
     parsed = args.parse_args()
     parsed.model, parsed.quantization = parsed.local_id.rsplit("-", 1)
-    utils.argparse_postproc_common(parsed)
-
-    parsed.artifact_path = os.path.join(
-        parsed.artifact_path, f"{parsed.model}-{parsed.quantization.name}"
-    )
 
     if parsed.primary_device == "auto":
         if tvm.cuda().exist:
@@ -137,6 +132,8 @@ def _parse_args():
             parsed.primary_device = "metal"
         else:
             raise ValueError("Cannot auto deduce device-name, please set it")
+
+    utils.argparse_postproc_common(parsed)
     return parsed
 
 

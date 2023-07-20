@@ -83,6 +83,10 @@ def argparse_postproc_common(args: argparse.Namespace) -> None:
     if args.quantization not in quantization_schemes:
         raise ValueError(f'Quantization "{args.quantization}" is not supported.')
     args.quantization = quantization_schemes[args.quantization]
+    args.artifact_path = os.path.join(
+        args.artifact_path,
+        f"{args.model}-{args.quantization.name}-{args.batch_size}"
+    )
 
 
 def split_transform_deploy_mod(

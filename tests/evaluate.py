@@ -41,9 +41,6 @@ def _parse_args():
     args.add_argument("--batch-size", type=int, default=1)
     parsed = args.parse_args()
     utils.argparse_postproc_common(parsed)
-    parsed.artifact_path = os.path.join(
-        parsed.artifact_path, f"{parsed.model}-{parsed.quantization.name}"
-    )
     return parsed
 
 

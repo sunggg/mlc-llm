@@ -120,11 +120,6 @@ def _parse_args():
         print(f"Database paths: {parsed.db_path}")
 
     utils.parse_target(parsed)
-    utils.argparse_postproc_common(parsed)
-
-    parsed.artifact_path = os.path.join(
-        parsed.artifact_path, f"{parsed.model}-{parsed.quantization.name}"
-    )
 
     # These dictionaries and functions are used for model weight loading.
     #  - "p" here stands for "parameter".
@@ -134,6 +129,7 @@ def _parse_args():
     parsed.f_convert_pname_fwd: Callable[[str], str] = None
     parsed.f_convert_param_bkwd: Callable[[str, Any], List[Tuple[str, Any]]] = None
 
+    utils.argparse_postproc_common(parsed)
     return parsed
 
 
