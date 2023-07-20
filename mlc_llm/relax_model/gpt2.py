@@ -327,7 +327,12 @@ class GPT2Attention(nn.Module):
             )
             batch_size, _, num_heads, head_size = k.struct_info.shape
             kv_cache_shape = R.shape([kv_seq_len, batch_size * num_heads, head_size])
-            kv_states_shape = R.shape([batch_size, kv_seq_len, num_heads, head_size])
+
+            if batch_size > 1:
+                kv_states_shape = R.shape([kv_seq_len, batch_size, num_heads, head_size])
+            else:
+                kv_states_shape = R.shape([batch_size, kv_seq_len, num_heads, head_size])
+
             k = nn.emit(
                 relax.Call(
                     f_kv_cache_view,
@@ -342,8 +347,14 @@ class GPT2Attention(nn.Module):
                     sinfo_args=[R.Tensor(kv_cache_shape, v.struct_info.dtype)],
                 )
             )
-            k = nn.emit(reshape(k, kv_states_shape))
-            v = nn.emit(reshape(v, kv_states_shape))
+
+            if batch_size > 1:
+                k = nn.emit(permute_dims(reshape(k, kv_states_shape), [1, 0, 2, 3]))
+                v = nn.emit(permute_dims(reshape(v, kv_states_shape), [1, 0, 2, 3]))
+            else:
+                k = nn.emit(reshape(k, kv_states_shape))
+                v = nn.emit(reshape(v, kv_states_shape))
+
             past_key_value = (k_cache, v_cache)
         else:
             past_key_value = (None, None)
