@@ -15,11 +15,11 @@ def sample_top_p(probs, p):
     return next_token
 
 
-def get_tvm_model(const_params, vm):
+def get_tvm_model(const_params, vm, kv_cache):
     class Model:
         def __init__(self) -> None:
             self.tot_seq_len = 0
-            self.kv_cache = vm["create_kv_cache"]()
+            self.kv_cache = kv_cache
 
         def forward(self, inputs: tvm.nd.array) -> tvm.nd.array:
             self.tot_seq_len += inputs.shape[1]

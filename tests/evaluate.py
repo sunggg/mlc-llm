@@ -38,6 +38,7 @@ def _parse_args():
     args.add_argument("--prompt", type=str, default="The capital of Canada is")
     args.add_argument("--profile", action="store_true", default=True)
     args.add_argument("--seqlen", type=int, default=256)
+    args.add_argument("--batch-size", type=int, default=1)
     parsed = args.parse_args()
     utils.argparse_postproc_common(parsed)
     parsed.artifact_path = os.path.join(
@@ -106,11 +107,12 @@ def deploy_to_pipeline(args) -> None:
 
     seqlen = args.seqlen
     inputs = tvm.nd.array(
-            torch.full((1,seqlen), fill_value=2)
+            torch.full((args.batch_size, seqlen), fill_value=2)
             .to(torch.int32).numpy(),
             device
         )
-    first_sampled_token = tvm.nd.array(np.array([[6234]]).astype("int32"), device)
+    first_token_np = np.repeat(np.array([[6234]]).astype("int32"), args.batch_size, axis=0)
+    first_sampled_token = tvm.nd.array(first_token_np, device)
     seq_len_shape = tvm.runtime.ShapeTuple([inputs.shape[1]])
     second_seq_len_shape = tvm.runtime.ShapeTuple([inputs.shape[1] + 1])
     kv_caches = vm["create_kv_cache"]()
