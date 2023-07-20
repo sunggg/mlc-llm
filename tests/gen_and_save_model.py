@@ -31,6 +31,7 @@ def gen_model(model, config, name):
 
 
 config_medium = {'activation_function': 'gelu',
+    'cohere': True,
     'attn_pdrop': 0.1,
     'bos_token_id': 50256,
     'embd_pdrop': 0.1,
@@ -58,6 +59,7 @@ config_medium = {'activation_function': 'gelu',
 }
 
 config_xlarge = {'activation_function': 'gelu',
+    'cohere': True,
     'attn_pdrop': 0.1,
     'bos_token_id': 50256,
     'embd_pdrop': 0.1,

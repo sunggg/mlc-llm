@@ -70,6 +70,7 @@ def argparse_postproc_common(args: argparse.Namespace) -> None:
         "wizardcoder-": "code_gpt",
         "wizardlm-": "wizardlm",
         "gpt_bigcode-santacoder": "code_gpt",
+        "gpt2-xl": "LM",
     }
 
     for prefix, conv_template in model_conv_templates.items():

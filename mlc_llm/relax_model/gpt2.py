@@ -22,6 +22,8 @@ from tvm.relax.op import (
     reshape,
     squeeze,
     split,
+    tanh,
+    power,
 )
 from tvm.relax.op.nn import gelu, softmax
 from .modules import ModuleList, Embedding, LayerNorm, Linear
@@ -34,6 +36,7 @@ class GPT2Config:
     def __init__(
         self,
         dtype="float32",
+        cohere=False,
         vocab_size=50257,
         n_positions=1024,
         n_embd=768,
@@ -60,6 +63,7 @@ class GPT2Config:
         **kwargs,
     ):
         self.dtype = dtype
+        self.cohere = False
         self.vocab_size = vocab_size
         self.max_sequence_length = (
             self.max_position_embeddings
@@ -166,21 +170,37 @@ class Conv1D(nn.Module):
         self.dtype = dtype
 
     def forward(self, input: relax.Expr) -> relax.Var:
-        return nn.emit(
-            astype(
-                matmul(input, self.weight, out_dtype="float32")
-                + astype(self.bias, "float32"),
-                self.dtype,
-            )
-        )
+        return nn.emit(matmul(input, self.weight) + self.bias)
 
 
 class GELUActivation(nn.Module):
-    def __init__(self, use_gelu_python: bool = False):
-        pass
+    def __init__(self, config: GPT2Config):
+        self.precomputed_constant = math.sqrt(2 / math.pi)
+        self.activation_function = config.activation_function
 
     def forward(self, input):
-        return nn.emit(gelu(input))
+        if self.activation_function == "gelu_new":
+            return nn.emit(
+                relax.const(0.5, dtype=input.struct_info.dtype)
+                * input
+                * (
+                    relax.const(1, dtype=input.struct_info.dtype)
+                    + tanh(
+                        relax.const(
+                            self.precomputed_constant, dtype=input.struct_info.dtype
+                        )
+                        * (
+                            input
+                            + relax.const(0.044715, dtype=input.struct_info.dtype)
+                            * power(
+                                input, relax.const(3, dtype=input.struct_info.dtype)
+                            )
+                        )
+                    )
+                )
+            )
+        else:
+            return nn.emit(gelu(input))
 
 
 class GPT2MLP(nn.Module):
@@ -188,7 +208,7 @@ class GPT2MLP(nn.Module):
         embed_dim = config.hidden_size
         self.c_fc = Conv1D(intermediate_size, embed_dim, dtype)
         self.c_proj = Conv1D(embed_dim, intermediate_size, dtype)
-        self.act = GELUActivation()
+        self.act = GELUActivation(config)
         self.dtype = dtype
 
     def forward(self, hidden_states):
@@ -473,7 +493,7 @@ class GPT2ForCausalLM(nn.Module):
         self.lm_head = Linear(
             in_features=config.n_embd,
             out_features=config.vocab_size,
-            bias=True,
+            bias=config.cohere,  # cohere gpt2 have bias in lm_head
             dtype=config.dtype,
         )
 
@@ -707,23 +727,43 @@ def get_model(args: argparse.Namespace, hf_config):
                 },
             )
 
-    mod, pidx2pname = param_manager.quantization_transform(mod)
-    pname2binname = load_torch_pname2binname_map(
-        args.model_path, set(pidx2pname.values())
-    )
+    def f_convert_pname_fwd(pname: str):
+        if config.cohere:
+            return pname
+        else:
+            if pname.startswith("transformer."):
+                return pname[12:]
+            elif pname == "lm_head.weight":
+                return "wte.weight"
+            else:
+                assert False, "Unexpected params"
 
     def f_convert_param_bkwd(torch_pname: str, raw_param):
         # raw_param: numpy.ndarray
+        bkwd_name = "transformer." + torch_pname
+        if torch_pname == "wte.weight":
+            return [
+                (bkwd_name, raw_param.astype(dtype)),
+                ("lm_head.weight", raw_param.astype(dtype)),
+            ]
         if "ln_" in torch_pname:
-            return [(torch_pname, raw_param.astype("float32"))]
+            return [(bkwd_name, raw_param.astype("float32"))]
         elif ".attn.bias" in torch_pname:
-            return [(torch_pname, raw_param.astype("bool"))]
+            return [(bkwd_name, raw_param.astype("bool"))]
         else:
-            return [(torch_pname, raw_param.astype(dtype))]
+            return [(bkwd_name, raw_param.astype(dtype))]
+
+    mod, pidx2pname = param_manager.quantization_transform(mod)
+    pname2binname = load_torch_pname2binname_map(
+        args.model_path,
+        set(pidx2pname.values()),
+        f_convert_pname_fwd=f_convert_pname_fwd,
+    )
 
     args.pidx2pname = pidx2pname
     args.pname2binname = pname2binname
-    args.f_convert_pname_fwd = lambda pname: pname
+    args.f_convert_pname_fwd = f_convert_pname_fwd
+    f_convert_param_bkwd.cnt = 0
     args.f_convert_param_bkwd = f_convert_param_bkwd
 
     return mod, [None] * len(pidx2pname)
