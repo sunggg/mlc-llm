@@ -170,7 +170,9 @@ class Conv1D(nn.Module):
         self.dtype = dtype
 
     def forward(self, input: relax.Expr) -> relax.Var:
-        return nn.emit(matmul(input, self.weight) + self.bias)
+        return nn.emit(
+            astype(matmul(input, self.weight, out_dtype="float32"), self.dtype) + self.bias
+        )
 
 
 class GELUActivation(nn.Module):
