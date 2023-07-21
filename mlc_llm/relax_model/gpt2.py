@@ -63,7 +63,7 @@ class GPT2Config:
         **kwargs,
     ):
         self.dtype = dtype
-        self.cohere = False
+        self.cohere = cohere
         self.vocab_size = vocab_size
         self.max_sequence_length = (
             self.max_position_embeddings
@@ -753,12 +753,15 @@ def get_model(args: argparse.Namespace, hf_config):
 
     def f_convert_param_bkwd(torch_pname: str, raw_param):
         # raw_param: numpy.ndarray
-        bkwd_name = "transformer." + torch_pname
-        if torch_pname == "wte.weight":
-            return [
-                (bkwd_name, raw_param.astype(dtype)),
-                ("lm_head.weight", raw_param.astype(dtype)),
-            ]
+        if config.cohere:
+            bkwd_name = torch_pname
+        else:
+            bkwd_name = "transformer." + torch_pname
+            if torch_pname == "wte.weight":
+                return [
+                    (bkwd_name, raw_param.astype(dtype)),
+                    ("lm_head.weight", raw_param.astype(dtype)),
+                ]
         if "ln_" in torch_pname:
             return [(bkwd_name, raw_param.astype("float16"))]
         elif ".attn.bias" in torch_pname:
