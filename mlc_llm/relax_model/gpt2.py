@@ -760,7 +760,7 @@ def get_model(args: argparse.Namespace, hf_config):
                 ("lm_head.weight", raw_param.astype(dtype)),
             ]
         if "ln_" in torch_pname:
-            return [(torch_pname, raw_param.astype("float16"))]
+            return [(bkwd_name, raw_param.astype("float16"))]
         elif ".attn.bias" in torch_pname:
             return [(bkwd_name, raw_param.astype("bool"))]
         else:
