@@ -68,6 +68,7 @@ def _parse_args():
     args.add_argument("--num-input-tokens", type=int, default=32)
     args.add_argument("--num-output-tokens", type=int, default=32)
     args.add_argument("--batch-size", type=int, default=1)
+    args.add_argument("--separator", type=str, default="|")
 
     parsed = args.parse_args()
     parsed.model_path = os.path.join(parsed.artifact_path, "models", parsed.model)
@@ -602,20 +603,23 @@ if __name__ == "__main__":
             skip_sampling=ARGS.skip_sampling
         )
 
-        print("|{:^15}|{:^12}|{:^12}|{:^12}|".format("mode", "batch", "seqlen", "genlen"), end="")
-        for p in percentiles:
-            print("{:^12}|{:^12}|".format(f"p{p}: sec", f"p{p}: tok/s"), end="")
+        print("|{:^15}{sep}{:^12}{sep}{:^12}{sep}{:^12}{sep}".format("mode", "batch", "seqlen", "genlen", sep=ARGS.separator), end="")
+        for i, p in enumerate(percentiles):
+            sep_end = ARGS.separator if i < len(percentiles) - 1 else "|"
+            print("{:^12}{sep}{:^12}{sep_end}".format(f"p{p}: sec", f"p{p}: tok/s", sep=ARGS.separator, sep_end=sep_end), end="")
         print("")
         print(
-            "|{:^15}|{:^12}|{:^12}|{:^12}|".format(
+            "|{:^15}{sep}{:^12}{sep}{:^12}{sep}{:^12}{sep}".format(
                 ARGS.benchmark_mode,
                 ARGS.batch_size,
                 num_input_tokens,
                 num_output_tokens,
+                sep=ARGS.separator,
             ),
             end="",
         )
         for i in range(len(percentiles)):
-            print("{:^12.3f}|{:^12.3f}|".format(elapsed[i], tok_per_sec[i]), end="")
+            sep_end = ARGS.separator if i < len(percentiles) - 1 else "|"
+            print("{:^12.3f}{sep}{:^12.3f}{sep_end}".format(elapsed[i], tok_per_sec[i], sep=ARGS.separator, sep_end=sep_end), end="")
         print("")
     del model_wrapper
