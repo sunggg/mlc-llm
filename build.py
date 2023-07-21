@@ -311,6 +311,8 @@ def mod_transform_before_build(
         from tvm.relax.backend.contrib.cutlass import annotate_workspace
         import tvm.relax.backend.contrib.cublas
 
+        mod = relax.transform.CombineParallelMatmul()(mod)
+
         patterns_to_use = []
         patterns_to_use += get_patterns_with_prefix("cutlass.attention")
         patterns_to_use += get_patterns_with_prefix("cublas")
@@ -326,11 +328,10 @@ def mod_transform_before_build(
         mod = relax.transform.AllocateWorkspace()(mod)
     else:
         mod = partition_for_cutlass(mod)
-    
 
     mod = relax.transform.RunCodegen(
         {"cutlass": {"sm": 80, "find_first_valid": False}},
-        entry_functions=model_names + ["transform_params"]
+        entry_functions=model_names + ["transform_params"],
     )(mod)
 
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
@@ -420,7 +421,7 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
 
     debug_dump_script(mod_deploy, "mod_build_stage.py", args)
 
-    with tvm.transform.PassContext(config={"relax.backend.use_cuda_graph": False}):
+    with tvm.transform.PassContext(config={"relax.backend.use_cuda_graph": True}):
         mod_deploy["decode"] = mod_deploy["decode"].with_attr({"num_input": 3})
         ex = relax.build(mod_deploy, args.target, system_lib=args.system_lib)
 
