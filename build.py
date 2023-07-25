@@ -303,17 +303,11 @@ def mod_transform_before_build(
     else:
         mod["prefill"] = rewrite_attention(mod["prefill"])
         mod["decode"] = rewrite_attention(mod["decode"])
+
         nbit = 4 if args.quantization.mode.endswith("4") else 8
         mod = mlc_llm.transform.RowWiseQuantize(nbit, "float32")(mod)
-        # mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
-        #    group_size=40 if args.quantization.mode.endswith("3") else 32,
-        #    sym=args.quantization.sym,
-        #    mode=args.quantization.mode,
-        #    storage_nbit=args.quantization.storage_nbit,
-        #    dtype=args.quantization.model_dtype,
-        # )(mod)
-
         patterns_to_use += get_patterns_with_prefix("cutlass")
+
     partition_pass = relax.transform.FuseOpsByPattern(
         patterns_to_use,
         bind_constants=False,
