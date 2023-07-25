@@ -292,6 +292,7 @@ def mod_transform_before_build(
 
     mod = relax.transform.CanonicalizeBindings()(mod)
     mod = relax.transform.CombineParallelMatmul()(mod)
+    mod = fuse_split_rotary_embedding(mod, config["num_hidden_layers"])
 
     patterns_to_use = []
     patterns_to_use += get_patterns_with_prefix("cutlass.attention")
@@ -320,14 +321,12 @@ def mod_transform_before_build(
     )
     mod = partition_pass(mod)
     mod = annotate_workspace(mod)
+    mod = relax.transform.AllocateWorkspace()(mod)
     mod = relax.transform.RunCodegen(
         {"cutlass": {"sm": 80, "find_first_valid": False}},
         entry_functions=model_names,  # + ["transform_params"],
     )(mod)
-    mod = relax.transform.AllocateWorkspace()(mod)
-
-    # mod = relax.transform.DeadCodeElimination(model_names)(mod)
-    mod = fuse_split_rotary_embedding(mod, config["num_hidden_layers"])
+    mod = relax.transform.DeadCodeElimination(model_names)(mod)
 
     mod = mlc_llm.transform.FuseDecodeTranspose()(mod)
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)
