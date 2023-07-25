@@ -7,3 +7,7 @@ from .rwkv_quantization import RWKVQuantize
 from .transpose_matmul import FuseTransposeMatmul
 from .rewrite_attention import rewrite_attention
 from .fuse_split_rotary_embedding import fuse_split_rotary_embedding
+from .clean_up_tir_attrs import CleanUpTIRAttrs
+from .decode_matmul_ewise import FuseDecodeMatmulEwise
+from .decode_take import FuseDecodeTake
+from .decode_transpose import FuseDecodeTranspose

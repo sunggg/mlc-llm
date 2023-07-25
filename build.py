@@ -14,6 +14,10 @@ from mlc_llm import utils
 from mlc_llm.relax_model import gpt_neox, llama, moss, rwkv
 from tvm.relax.backend.contrib.cutlass import partition_for_cutlass
 from mlc_llm.transform import fuse_split_rotary_embedding, rewrite_attention
+from tvm import dlight as dl
+from tvm.relax.backend import get_patterns_with_prefix
+from tvm.relax.backend.contrib.cutlass import annotate_workspace
+import tvm.relax.backend.contrib.cublas
 
 
 def _parse_args():
@@ -286,37 +290,56 @@ def mod_transform_before_build(
             "get_metadata",
         ]
 
-    use_cutlass = True
-
     mod = relax.transform.CanonicalizeBindings()(mod)
     mod = relax.transform.CombineParallelMatmul()(mod)
 
-    mod = fuse_split_rotary_embedding(mod, config["num_hidden_layers"])
+    patterns_to_use = []
+    patterns_to_use += get_patterns_with_prefix("cutlass.attention")
 
-    if use_cutlass:
+    if args.quantization.name.startswith("q0"):
+        patterns_to_use += get_patterns_with_prefix("cublas")
+        patterns_to_use += get_patterns_with_prefix("cutlass")
+    else:
         mod["prefill"] = rewrite_attention(mod["prefill"])
         mod["decode"] = rewrite_attention(mod["decode"])
         nbit = 4 if args.quantization.mode.endswith("4") else 8
         mod = mlc_llm.transform.RowWiseQuantize(nbit, "float32")(mod)
-    else:
-        mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
-            group_size=40 if args.quantization.mode.endswith("3") else 32,
-            sym=args.quantization.sym,
-            mode=args.quantization.mode,
-            storage_nbit=args.quantization.storage_nbit,
-            dtype=args.quantization.model_dtype
-        )(mod)
+        # mod = mlc_llm.transform.GroupQuantize(  # pylint: disable=not-callable
+        #    group_size=40 if args.quantization.mode.endswith("3") else 32,
+        #    sym=args.quantization.sym,
+        #    mode=args.quantization.mode,
+        #    storage_nbit=args.quantization.storage_nbit,
+        #    dtype=args.quantization.model_dtype,
+        # )(mod)
 
-    mod = relax.transform.DeadCodeElimination(model_names)(mod)
+        patterns_to_use += get_patterns_with_prefix("cutlass")
+    partition_pass = relax.transform.FuseOpsByPattern(
+        patterns_to_use,
+        bind_constants=False,
+        annotate_codegen=True,
+    )
+    mod = partition_pass(mod)
+    mod = annotate_workspace(mod)
+    mod = relax.transform.RunCodegen(
+        {"cutlass": {"sm": 80, "find_first_valid": False}},
+        entry_functions=model_names,  # + ["transform_params"],
+    )(mod)
+    mod = relax.transform.AllocateWorkspace()(mod)
 
-    if use_cutlass:
-        mod = partition_for_cutlass(mod)
-        mod = relax.transform.RunCodegen(
-            {"cutlass": {"sm": 80, "find_first_valid": False}},
-            entry_functions=model_names
-        )(mod)
+    # mod = relax.transform.DeadCodeElimination(model_names)(mod)
+    mod = fuse_split_rotary_embedding(mod, config["num_hidden_layers"])
+
+    mod = mlc_llm.transform.FuseDecodeTranspose()(mod)
+    mod = mlc_llm.transform.FuseTransposeMatmul()(mod)
 
     mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
+    mod = mlc_llm.transform.FuseDecodeMatmulEwise(  # pylint: disable=not-callable
+        args.quantization.name, args.target_kind
+    )(mod)
+    mod = mlc_llm.transform.FuseDecodeTake()(mod)
+    mod = relax.transform.DeadCodeElimination(model_names)(mod)
+    mod = mlc_llm.transform.CleanUpTIRAttrs()(mod)
+
     mod = relax.transform.LiftTransformParams()(mod)
     mod_transform, mod_deploy = utils.split_transform_deploy_mod(mod, model_names)
 
@@ -366,38 +389,29 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
 
     debug_dump_script(mod_deploy, "mod_before_build.py", args)
     if target_kind != "cpu":
-        # db = utils.get_database(args.db_path)  # pylint: disable=invalid-name
-        # with db, tvm.target.Target("apple/m1-gpu-restricted"):
-        #     if args.target_kind == "android":
-        #         mod_deploy = mlc_llm.dispatch.DispatchTIROperatorAdreno()(  # pylint: disable=not-callable
-        #             mod_deploy
-        #         )
-        #     mod_deploy = relax.transform.MetaScheduleApplyDatabase()(mod_deploy)
-        #     mod_deploy = (
-        #         mlc_llm.dispatch.DispatchTIROperator(  # pylint: disable=not-callable
-        #             args.model_category
-        #         )(mod_deploy)
-        #     )
-        work_dir = "work"
-        passes = []
-
-        with tvm.target.Target("nvidia/geforce-rtx-3070"), tvm.transform.PassContext(opt_level=3):
-            if False:
-                passes.append(
-                    relax.transform.MetaScheduleTuneIRMod(
-                        params={},
-                        work_dir=work_dir,
-                        max_trials_global=2000,
-                        max_trials_per_task=50,
-                        op_names=["rms_norm1", "silu", "reshape2", "reshape7", "softmax"]
-                    )
+        db = utils.get_database(args.db_path)  # pylint: disable=invalid-name
+        dispatch_target = (
+            args.target
+            if args.target_kind != "webgpu"
+            else tvm.target.Target("apple/m1-gpu-restricted")
+        )
+        with db, dispatch_target:
+            mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.Matmul())(mod_deploy)
+            mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.DecodeGEMV())(mod_deploy)
+            mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.Reduction())(mod_deploy)
+            if args.target_kind == "android":
+                mod_deploy = mlc_llm.dispatch.DispatchTIROperatorAdreno()(  # pylint: disable=not-callable
+                    mod_deploy
                 )
-            passes.append(relax.transform.MetaScheduleApplyDatabase(work_dir))
-            passes.append(tvm.tir.transform.DefaultGPUSchedule())
-            passes.append(mlc_llm.transform.LiftTIRGlobalBufferAlloc())
-            passes.append(tvm.tir.transform.ForceNarrowIndexToInt32())
-
-            mod_deploy = tvm.transform.Sequential(passes)(mod_deploy)
+            mod_deploy = relax.transform.MetaScheduleApplyDatabase()(mod_deploy)
+            mod_deploy = (
+                mlc_llm.dispatch.DispatchTIROperator(  # pylint: disable=not-callable
+                    args.model_category
+                )(mod_deploy)
+            )
+            mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.Fallback())(mod_deploy)
+            mod_deploy = mlc_llm.transform.LiftTIRGlobalBufferAlloc()(mod_deploy)
+            mod_deploy = tvm.tir.transform.ForceNarrowIndexToInt32()(mod_deploy)
 
     if args.debug_load_script:
         mod_deploy = debug_load_script("mod_build_stage_debug.py", args)
