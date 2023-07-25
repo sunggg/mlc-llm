@@ -65,6 +65,7 @@ def argparse_postproc_common(args: argparse.Namespace) -> None:
             else:
                 raise ValueError("Cannot auto deduce device-name, please set it")
     supported_model_prefix = {
+        "llama-2": ("llama-2", "llama"),
         "vicuna-": ("vicuna_v1.1", "llama"),
         "dolly-": ("dolly", "gpt_neox"),
         "stablelm-": ("stablelm", "gpt_neox"),
@@ -110,7 +111,7 @@ def split_transform_deploy_mod(
             mod_deploy[gv] = func
         elif gv.name_hint == transform_func_name:
             mod_transform[gv] = func
-        elif "transform_params" not in gv.name_hint: # Hack
+        elif "transform_params" not in gv.name_hint:  # Hack
             mod_deploy[gv] = func
 
     mod_transform = relax.transform.DeadCodeElimination([transform_func_name])(
@@ -577,7 +578,9 @@ def parse_target(args: argparse.Namespace) -> None:
         args.lib_format = "wasm"
         args.system_lib = True
         if os.environ.get("TVM_HOME", "") == "":
-            raise RuntimeError("Please set TVM_HOME for webgpu build following scripts/prep_emcc_deps.sh")
+            raise RuntimeError(
+                "Please set TVM_HOME for webgpu build following scripts/prep_emcc_deps.sh"
+            )
     elif args.target in ["android", "android-dylib"]:  # android-opencl
         from tvm.contrib import ndk, tar
 

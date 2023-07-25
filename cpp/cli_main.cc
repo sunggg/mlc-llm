@@ -28,8 +28,9 @@
 const std::vector<std::string> quantization_presets = {"q3f16_0",  //
                                                        "q4f16_0",  //
                                                        "q4f32_0",  //
-                                                       "q0f32",    //
-                                                       "q0f16"};
+                                                       "q8f16_0",  //
+                                                       "q0f16",    //
+                                                       "q0f32"};
 
 std::string DetectDeviceName(std::string device_name) {
   using tvm::runtime::DeviceAPI;
@@ -444,12 +445,6 @@ void Chat(ChatModule* chat, const std::filesystem::path& artifact_path,
   PrintSpecialCommands();
   chat->Reload(model);
   chat->ProcessSystemPrompts();
-
-  auto input = "Write a poem about Pittsburgh.";
-  Converse(chat, input, stream_interval, std::cout);
-  std::cout << chat->RuntimeStatsText() << std::endl << std::flush;
-  return;
-
   while (true) {
     std::string input;
     std::cout << chat->GetRole0() << ": " << std::flush;
