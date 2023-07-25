@@ -593,7 +593,7 @@ class LLMChat {
     std::vector<int32_t> prompt_tokens =
         this->PrepareBeforeEmbedding(inp, append_conversation, place_in_prompt);
     int64_t token_len = static_cast<int64_t>(prompt_tokens.size());
-    LOG(INFO) << "Is token len zero?: " << (token_len) << "\n";
+
     if (token_len == 0) return;
 
     auto tstart = std::chrono::high_resolution_clock::now();
@@ -608,7 +608,7 @@ class LLMChat {
       this->prefill_total_tokens += token_len;
       return;
     }
-    LOG(INFO) << "Is token len zero?: " << (token_len) << "\n";
+
     int32_t next_token = this->SampleTokenFromLogits(logits_on_device, temperature_, top_p_);
 
     auto tend = std::chrono::high_resolution_clock::now();
@@ -746,7 +746,6 @@ class LLMChat {
         std::any_of(this->conversation_.stop_tokens.begin(), this->conversation_.stop_tokens.end(),
                     [next_token](int32_t token) { return token == next_token; });
 
-    LOG(INFO) << "stop is triggered: " << stop_triggered_;
     if (!stop_triggered_) {
       output_ids_.push_back(next_token);
       appeared_token_ids_.insert(next_token);
