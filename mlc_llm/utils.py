@@ -18,6 +18,7 @@ supported_model_types = set(
 )
 from dataclasses import dataclass
 
+
 @dataclass
 class Quantization:
     """Class denoting the quantization options"""
@@ -27,6 +28,7 @@ class Quantization:
     sym: bool
     storage_nbit: int
     model_dtype: str
+
 
 quantization_dict = {
     "q3f16_0": Quantization(
@@ -51,6 +53,7 @@ quantization_dict = {
         name="q8f16_0", mode="uint8", sym=False, storage_nbit=-1, model_dtype="float16"
     ),
 }
+
 
 def argparse_postproc_common(args: argparse.Namespace) -> None:
     if hasattr(args, "device_name"):
@@ -88,6 +91,7 @@ def argparse_postproc_common(args: argparse.Namespace) -> None:
     assert args.model_category is not None
 
     model_conv_templates = {
+        "llama-2": "llama-2",
         "vicuna-": "vicuna_v1.1",
         "dolly-": "dolly",
         "stablelm-": "stablelm",
