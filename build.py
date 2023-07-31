@@ -313,7 +313,7 @@ def mod_transform_before_build(
     mod = partition_for_cutlass(mod)
     mod = relax.transform.RunCodegen(
         {"cutlass": {"sm": 80, "find_first_valid": False}},
-        entry_functions=model_names + ["transform_params"]
+        entry_functions=model_names + ["transform_params"],
     )(mod)
 
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)  # pylint: disable=not-callable
@@ -382,8 +382,9 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
         )
         with db, dispatch_target:
             mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.Matmul())(mod_deploy)
-            mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.DecodeGEMV())(mod_deploy)
+            mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.GEMV())(mod_deploy)
             mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.Reduction())(mod_deploy)
+            mod_deploy = dl.ApplyDefaultSchedule(dl.gpu.GeneralReduction())(mod_deploy)
             if args.target_kind == "android":
                 mod_deploy = mlc_llm.dispatch.DispatchTIROperatorAdreno()(  # pylint: disable=not-callable
                     mod_deploy
