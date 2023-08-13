@@ -15,6 +15,7 @@ from mlc_llm.relax_model import (
     gpt_neox,
     gptj,
     llama,
+    llama_mlp,
     minigpt,
     param_manager,
     rwkv,
@@ -151,9 +152,11 @@ class BuildArgs:
     no_cublas: bool = field(
         default=False,
         metadata={
-            "help": ("Disable the step that offloads matmul to cuBLAS. Without this flag, "
-                     "matmul will be offloaded to cuBLAS if quantization mode is q0f16 or q0f32, "
-                     "target is CUDA and TVM has been built with cuBLAS enbaled."),
+            "help": (
+                "Disable the step that offloads matmul to cuBLAS. Without this flag, "
+                "matmul will be offloaded to cuBLAS if quantization mode is q0f16 or q0f32, "
+                "target is CUDA and TVM has been built with cuBLAS enbaled."
+            ),
             "action": "store_true",
         },
     )
@@ -164,6 +167,13 @@ class BuildArgs:
                 "Specifies whether to enable CUDA Graph for the decoder. MLP and QKV "
                 "projection between two attention layers are put into a graph."
             ),
+            "action": "store_true",
+        },
+    )
+    only_mlp: bool = field(
+        default=False,
+        metadata={
+            "help": ("only compiles LlamaMLP. This is for PoC of vllm integration."),
             "action": "store_true",
         },
     )
@@ -284,6 +294,9 @@ def validate_config(model_path: str):
         ), f"Model type {config['model_type']} not supported."
 
 
+model_names = None
+
+
 def mod_transform_before_build(
     mod: tvm.IRModule,
     param_manager: param_manager.ParamManager,
@@ -291,6 +304,7 @@ def mod_transform_before_build(
     config: Dict,
 ) -> tvm.IRModule:
     """First-stage: Legalize ops and trace"""
+    """
     if args.model.startswith("minigpt"):
         model_names = ["embed"]
     else:
@@ -305,26 +319,35 @@ def mod_transform_before_build(
             model_names = ["embed", "prefill_with_embed"] + model_names[1:]
         if args.model.startswith("rwkv-"):
             model_names += ["reset_kv_cache"]
+    """
+    global model_names
+    # model_names = ["LlamaMLP_" + str(layer_id) for layer_id in range(10)]
 
-    mod = param_manager.transform_dequantize(mod)
+    model_names = ["LlamaMLP_" + str(layer_id) for layer_id in range(config["num_hidden_layers"])]
+    # TODO
+    # 1. Enable transform_dequantize
+    # 2. when enabling cublas, there is an error during shape lowering. so disable cublas for now.
+    # mod = param_manager.transform_dequantize(mod)
 
     use_ft_quant = args.quantization.name in ["q4f16_ft", "q8f16_ft"]
     mod = mlc_llm.transform.FuseDecodeTranspose(skip_gemm=not use_ft_quant)(
         mod
     )  # pylint: disable=not-callable
 
-    if "num_attention_heads" in config and "hidden_size" in config:
-        mod = fuse_split_rotary_embedding(mod, config["num_attention_heads"], config["hidden_size"])
+    # if "num_attention_heads" in config and "hidden_size" in config:
+    #    mod = fuse_split_rotary_embedding(
+    #        mod, config["num_attention_heads"], config["hidden_size"]
+    #    )
 
     if args.target_kind == "cuda":
         patterns = []
 
         has_cutlass = tvm.get_global_func("relax.ext.cutlass", True)
 
-        if has_cutlass and not args.no_cutlass_attn:
-            mod["prefill"] = rewrite_attention(mod["prefill"])
-            mod["decode"] = rewrite_attention(mod["decode"])
-            patterns += get_patterns_with_prefix("cutlass.attention")
+        # if has_cutlass and not args.no_cutlass_attn:
+        #    mod["prefill"] = rewrite_attention(mod["prefill"])
+        #    mod["decode"] = rewrite_attention(mod["decode"])
+        #    patterns += get_patterns_with_prefix("cutlass.attention")
 
         if has_cutlass and not args.no_cutlass_norm:
             patterns += get_patterns_with_prefix("cutlass.layer_norm")
@@ -457,12 +480,16 @@ def build(mod_deploy: tvm.IRModule, args: argparse.Namespace) -> None:
     utils.debug_dump_script(mod_deploy, "mod_build_stage.py", args)
 
     use_cuda_graph = args.use_cuda_graph and target_kind == "cuda"
-
+    mod_deploy.show()
     with tvm.transform.PassContext(config={"relax.backend.use_cuda_graph": use_cuda_graph}):
         # The num_input attribute is needed to capture transformed weights passed as input
         # into a cuda graph.
-        mod_deploy["decode"] = mod_deploy["decode"].with_attr({"num_input": 3})
+        # mod_deploy["decode"] = mod_deploy["decode"].with_attr({"num_input": 3})
+        # for model_name in model_names:
+        #    mod_deploy[model_name] = mod_deploy[model_name].with_attr({"num_input": 3})
         ex = relax.build(mod_deploy, args.target, system_lib=args.system_lib)
+
+    mod_deploy.show()
 
     output_filename = f"{args.model}-{args.quantization.name}-{target_kind}.{args.lib_format}"
 
@@ -491,7 +518,10 @@ def build_model_from_args(args: argparse.Namespace):
             config = json.load(i_f)
     if not use_cache or args.convert_weight_only:
         if args.model_category == "llama":
-            mod, param_manager, params = llama.get_model(args, config)
+            if args.only_mlp:
+                mod, param_manager, params = llama_mlp.get_model(args, config)
+            else:
+                mod, param_manager, params = llama.get_model(args, config)
         elif args.model_category == "gpt_neox":
             mod, param_manager, params = gpt_neox.get_model(args, config)
         elif args.model_category == "gpt_bigcode":

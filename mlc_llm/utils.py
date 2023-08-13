@@ -14,7 +14,7 @@ from .transform import ReorderTransformFunc
 
 
 supported_model_types = set(
-    ["llama", "gpt_neox", "gpt_bigcode", "minigpt", "moss", "rwkv", "gptj", "chatglm"]
+    ["llama", "llama_mlp", "gpt_neox", "gpt_bigcode", "minigpt", "moss", "rwkv", "gptj", "chatglm"]
 )
 
 
@@ -139,6 +139,7 @@ def debug_dump_benchmark_script(
         outfile.write("\n" + "\n".join(stmt) + "\n")
     print(f"Dump benchmarking script to {dump_path}.")
 
+
 def debug_load_script(name: str, args: argparse.Namespace):
     input_path = os.path.join(args.artifact_path, "debug", name)
     lib = {"__file__": input_path}
@@ -198,7 +199,7 @@ def convert_weights(
     loaded_torch_bins: Set[str] = set()
     cached_relax_params: Dict[int, tvm.nd.NDArray] = {}
     cached_torch_params: Dict[str, Any] = {}
-
+    # print(f"model_params: {model_params}")
     get_item, set_item = param_mgr.get_param_loading_functions(
         model_params,
         loaded_params,

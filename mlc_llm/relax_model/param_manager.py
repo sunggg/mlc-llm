@@ -239,6 +239,8 @@ class ParamManager:
             if _base_model_prefix:
                 name = f"{_base_model_prefix}.{name}"
             quant_kind = f_get_param_quant_kind(name, relax_param.struct_info)
+
+            print(f">> {name}, {quant_kind}, {quantization_scheme.pre_quantized}")
             if quantization_scheme.pre_quantized:
                 # if pre_quantized, register the quantized tensor based on the quant_kind
                 if quantization_scheme.is_inside_layer_modules(name):
