@@ -131,7 +131,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-decode-steps", type=int, default=16)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
-    
+
     args.model_artifact_path = os.path.join(args.artifact_path, args.local_id)
     if not os.path.exists(args.model_artifact_path):
         raise Exception(f"Invalid local id: {args.local_id}")

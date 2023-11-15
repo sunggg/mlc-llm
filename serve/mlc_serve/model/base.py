@@ -42,3 +42,4 @@ def get_model_artifact_config(model_artifact_path):
             json_object.update(json.load(f))
     
     return ModelArtifactConfig._from_json(json_object)
+    

@@ -655,12 +655,10 @@ class PagedCacheModelModule:
         self,
         model_artifact_path: str, 
         engine_config: MLCServeEngineConfig, 
-        #max_batched_tokens: int = 0,
-        #max_input_len: int = 0,
     ):
-        self.engine_config = engine_config
         max_batched_tokens, max_input_len = engine_config.max_batched_tokens, engine_config.max_input_len
         model_artifact_config = get_model_artifact_config(model_artifact_path)  
+        
         dev = tvm.device("cuda", 0)
 
         model = Model(model_artifact_config, dev)
@@ -696,7 +694,8 @@ class PagedCacheModelModule:
             model.disco_session,
             model_artifact_config.sliding_window,
         )
-
+        self.engine_config = engine_config
+        self.model_artifact_config = model_artifact_config
         self.text_generator = PagedCacheModelTextGenerator(model)
         self.cache_manager = cache_manager
 

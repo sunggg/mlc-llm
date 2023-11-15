@@ -57,6 +57,7 @@ class GenerationLoopWorker:
         self.text_generator = model_module.text_generator
         self.cache_manager = model_module.cache_manager
         self.tokenizer = model_module.tokenizer
+        self.model_artifact_config = model_module.model_artifact_config
 
         self.max_batched_tokens = model_module.engine_config.max_batched_tokens
         self.max_decode_steps = min(
@@ -289,8 +290,7 @@ class GenerationLoopWorker:
         return self.queue or self.current_batch
 
     def _should_stop_by_length(self, state: RequestState) -> bool:
-        # TODO: put to config
-        max_tokens = 4096
+        max_tokens = self.model_artifact_config.max_context_length
         if state.stopping_criteria.max_tokens is not None:
             max_tokens = min(max_tokens, state.stopping_criteria.max_tokens)
 

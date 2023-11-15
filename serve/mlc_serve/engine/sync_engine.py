@@ -41,6 +41,7 @@ class SynchronousInferenceEngine(InferenceEngine):
         self.tokenizer = model_module.tokenizer
         self.conversation_template = model_module.conversation_template
         self.cache_manager = model_module.cache_manager
+        self.model_artifact_config = model_module.model_artifact_config
 
         self.max_batched_tokens = model_module.engine_config.max_batched_tokens
         self.max_decode_steps = min(
@@ -349,8 +350,7 @@ class SynchronousInferenceEngine(InferenceEngine):
         return full[len(prefix) :]
 
     def _should_stop_by_length(self, state: RequestState) -> bool:
-        # TODO: put to config
-        max_tokens = 4096
+        max_tokens = self.model_artifact_config.max_context_length
         if state.stopping_criteria.max_tokens is not None:
             max_tokens = min(max_tokens, state.stopping_criteria.max_tokens)
 
