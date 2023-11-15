@@ -2,7 +2,7 @@
 import argparse
 import json
 import random
-import time
+import time, os
 from typing import List, Tuple
 
 import pandas as pd
@@ -104,10 +104,7 @@ def create_engine_and_tokenizer_module(
             tokenizer_module=tokenizer_module,
             model_module_loader=PagedCacheModelModule,
             model_module_loader_kwargs={
-                "model_name": args.model,
-                "artifact_path": args.artifact_path,
-                "quantization": args.quantization.name,
-                "num_shards": args.num_shards,
+                "model_artifact_path": args.model_artifact_path,
                 "max_num_batched_tokens": args.max_num_batched_tokens,
                 "max_input_len": args.max_input_len,
             },
@@ -118,10 +115,7 @@ def create_engine_and_tokenizer_module(
         engine.start()
     else:
         model_module = PagedCacheModelModule(
-            args.model,
-            args.artifact_path,
-            args.quantization.name,
-            args.num_shards,
+            model_artifact_path = args.model_artifact_path,
             max_num_batched_tokens=args.max_num_batched_tokens,
             max_input_len=args.max_input_len,
         )
@@ -185,7 +179,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--local-id", type=str, required=True)
     parser.add_argument("--artifact-path", type=str, default="dist")
-    parser.add_argument("--num-shards", type=int, default=1)
+    #parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--use-staging-engine", action="store_true")
     parser.add_argument("--max-num-batched-tokens", type=int, default=-1)
     parser.add_argument("--max-input-len", type=int, default=-1)
@@ -205,7 +199,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     setup_logging(args)
 
-    args.model, args.quantization = args.local_id.rsplit("-", 1)
-    utils.argparse_postproc_common(args)
+    args.model_artifact_path = os.path.join(args.artifact_path, args.local_id)
+    if not os.path.exists(args.model_artifact_path):
+        raise Exception(f"Invalid local id: {args.local_id}")
 
     main(args)

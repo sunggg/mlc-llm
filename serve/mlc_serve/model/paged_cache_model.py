@@ -3,7 +3,9 @@ import logging
 import math
 import os
 from collections import defaultdict
-from typing import List, Union
+from typing import List, Union, Optional
+from dataclasses import dataclass
+import inspect
 
 import numpy as np
 import torch
@@ -326,22 +328,16 @@ def copy_to_worker_0(sess: di.Session, host_array):
     return x_array
 
 
-def get_tvm_model(artifact_path, model, quantization, num_shards, dev):
-    model_artifact_path = os.path.join(
-        artifact_path, f"{model}-{quantization}-presharded-{num_shards}gpu"
-    )
-    if not os.path.exists(model_artifact_path):
-        model_artifact_path = os.path.join(artifact_path, f"{model}-{quantization}")
+def get_tvm_model(config, dev):
+    lib_path = os.path.join(config.model_artifact_path, config.library_name)
 
-    lib_path = os.path.join(model_artifact_path, f"{model}-{quantization}-cuda.so")
-
-    if num_shards == 1:
+    if config.num_shards == 1:
         ex = tvm.runtime.load_module(lib_path)
         vm = relax.VirtualMachine(ex, dev)
-        params = utils.load_params(model_artifact_path, dev)
+        params = utils.load_params(config.model_artifact_path, dev)
         return vm.module, params, None
 
-    return load_disco_module(model_artifact_path, lib_path, num_shards)
+    return load_disco_module(config.model_artifact_path, lib_path, config.num_shards)
 
 
 def _prepare_inputs(
@@ -431,24 +427,17 @@ def _prepare_inputs(
 class Model:
     def __init__(
         self,
-        artifact_path,
-        model_name,
-        quant,
-        vocab_size,
-        num_shards,
+        config,
         dev,
-        sliding_window=None,
     ):
-        self.mod, self.params, self.disco_session = get_tvm_model(
-            artifact_path, model_name, quant, num_shards, dev
-        )
+        self.mod, self.params, self.disco_session = get_tvm_model(config, dev)
         self.dev = dev
-        self.vocab_size = vocab_size
-        self.sliding_window = sliding_window
-        self.num_shards = num_shards
+        self.vocab_size = config.vocab_size
+        self.sliding_window = config.sliding_window
+        self.num_shards = config.num_shards
 
-        if sliding_window:
-            self.block_sliding_window = sliding_window // CacheManager.block_size
+        if self.sliding_window:
+            self.block_sliding_window = self.sliding_window // CacheManager.block_size
         else:
             self.block_sliding_window = None
 
@@ -607,6 +596,9 @@ class Model:
         torch.cuda.synchronize()
         torch.cuda.nvtx.range_pop()
 
+        print(self.vocab_size, logits)
+        print(sampling_params)
+
         next_tokens = sample(logits, sampling_params, self.vocab_size)
 
         return [
@@ -687,49 +679,76 @@ class ConversationTemplate:
         )
 
 
+
+
+
 class HfTokenizerModule:
-    def __init__(self, model_name: str, artifact_path: str):
-        model_path = os.path.join(artifact_path, "models", model_name)
+    def __init__(self, model_artifact_path: str):
         hf_tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
+            os.path.join(model_artifact_path, "model"),
             trust_remote_code=False,
         )
         self.tokenizer = Tokenizer(hf_tokenizer)
         self.conversation_template = ConversationTemplate(hf_tokenizer)
 
 
+@dataclass
+class ModelArtifactConfig:
+    model_artifact_path: Optional[str] = None
+    num_shards: Optional[int] = None
+    quantization: Optional[str] = None
+    model_type: Optional[str] = None
+    library_name: Optional[str] = None
+    max_context_length: Optional[int] = None
+    vocab_size: Optional[int] = None
+    sliding_window: Optional[int] = None
+    build_options: Optional[str] = None
+    num_key_value_heads: Optional[int] = None
+    num_attention_heads: Optional[int] = None
+    num_hidden_layers: Optional[int] = None
+    hidden_size: Optional[int] = None
+
+    @classmethod
+    def _from_json(config_cls, json_obj: dict):
+        return config_cls(
+            **{
+                k: v
+                for k, v in json_obj.items()
+                if k in inspect.signature(config_cls).parameters
+            }
+        )
+
+def get_model_artifact_config(model_artifact_path):
+    json_object = {"model_artifact_path": model_artifact_path}
+    for config_file_name in [ 
+        "build_config.json",
+        "model/mlc-model-config.json"
+    ]:
+        config_file_path = os.path.join(model_artifact_path, config_file_name)
+        assert os.path.exists(config_file_path), f"{config_file_path} should exist. Did you build with `--enable-batching`?"
+        with open(config_file_path, mode="rt", encoding="utf-8") as f:
+            json_object.update(json.load(f))
+    
+    return ModelArtifactConfig._from_json(json_object)
+
+
 class PagedCacheModelModule:
     def __init__(
         self,
-        model_name: str,
-        artifact_path: str,
-        quantization: str,
-        num_shards: int,
+        model_artifact_path: str, 
         max_num_batched_tokens: int = 0,
         max_input_len: int = 0,
     ):
-        model_path = os.path.join(artifact_path, "models", model_name)
-
+        model_artifact_config = get_model_artifact_config(model_artifact_path)  
         dev = tvm.device("cuda", 0)
 
-        with open(os.path.join(model_path, "config.json"), encoding="utf-8") as i_f:
-            config = LlamaConfig(**json.load(i_f))
+        model = Model(model_artifact_config, dev)
 
-        model = Model(
-            artifact_path,
-            model_name,
-            quantization,
-            config.vocab_size,
-            num_shards,
-            dev,
-            config.sliding_window,
-        )
-
-        if num_shards > 1:
+        if model_artifact_config.num_shards > 1:
             model.disco_session.sync_worker_0()
 
-        num_kv_heads = config.get_num_key_value_heads() // num_shards
-        head_size = config.hidden_size // config.num_attention_heads
+        num_kv_heads = model_artifact_config.num_key_value_heads // model_artifact_config.num_shards
+        head_size = model_artifact_config.hidden_size // model_artifact_config.num_attention_heads
 
         if max_num_batched_tokens > 0:
             assert max_input_len > 0
@@ -739,7 +758,7 @@ class PagedCacheModelModule:
             num_blocks = get_num_cache_blocks(
                 model,
                 [max_input_len] * num_seqs,
-                config.num_hidden_layers,
+                model_artifact_config.num_hidden_layers,
                 num_kv_heads,
                 head_size,
             )
@@ -750,16 +769,16 @@ class PagedCacheModelModule:
 
         cache_manager = CacheManager(
             num_blocks,
-            config.num_hidden_layers,
+            model_artifact_config.num_hidden_layers,
             num_kv_heads,
             head_size,
             model.disco_session,
-            config.sliding_window,
+            model_artifact_config.sliding_window,
         )
 
         self.text_generator = PagedCacheModelTextGenerator(model)
         self.cache_manager = cache_manager
 
-        tokenizer_module = HfTokenizerModule(model_name, artifact_path)
+        tokenizer_module = HfTokenizerModule(model_artifact_path)
         self.tokenizer = tokenizer_module.tokenizer
         self.conversation_template = tokenizer_module.conversation_template

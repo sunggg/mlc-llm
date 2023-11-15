@@ -2,10 +2,8 @@ import argparse
 import logging
 import logging.config
 import os
-
 import uvicorn
-
-from mlc_llm import utils
+#from mlc_llm import utils
 
 from .api import create_app
 from .engine import AsyncEngineConnector
@@ -32,7 +30,6 @@ def parse_args():
     args.add_argument("--port", type=int, default=8000)
     args.add_argument("--local-id", type=str, required=True)
     args.add_argument("--artifact-path", type=str, default="dist")
-    args.add_argument("--num-shards", type=int, default=1)
     args.add_argument("--use-staging-engine", action="store_true")
     args.add_argument("--max-num-batched-tokens", type=int, default=-1)
     args.add_argument("--max-input-len", type=int, default=-1)
@@ -40,8 +37,6 @@ def parse_args():
     args.add_argument("--max-decode-steps", type=int, default=16)
     args.add_argument("--debug-logging", action="store_true")
     parsed = args.parse_args()
-    parsed.model, parsed.quantization = parsed.local_id.rsplit("-", 1)
-    utils.argparse_postproc_common(parsed)
     return parsed
 
 
@@ -79,16 +74,23 @@ def setup_logging(args):
 def create_engine(
     args: argparse.Namespace,
 ):
+    # `model_artifact_path` has the following structure
+    #  |- compiled artifact (.so)
+    #  |- `build_config.json`: stores compile-time info, such as `num_shards` and `quantization`. 
+    #  |- params/ : stores weights in mlc format and `ndarray-cache.json`. 
+    #  |            `ndarray-cache.json` is especially important for Disco.
+    #  |- model/ : stores info from hf model cards such as max context length and tokenizer
+    model_artifact_path = os.path.join(args.artifact_path, args.local_id)
+    if not os.path.exists(model_artifact_path):
+        raise Exception(f"Invalid local id: {args.local_id}")
+  
     if args.use_staging_engine:
-        tokenizer_module = HfTokenizerModule(args.model, args.artifact_path)
+        tokenizer_module = HfTokenizerModule(model_artifact_path)
         return StagingInferenceEngine(
             tokenizer_module=tokenizer_module,
             model_module_loader=PagedCacheModelModule,
             model_module_loader_kwargs={
-                "model_name": args.model,
-                "artifact_path": args.artifact_path,
-                "quantization": args.quantization.name,
-                "num_shards": args.num_shards,
+                "model_artifact_path": model_artifact_path,
                 "max_num_batched_tokens": args.max_num_batched_tokens,
                 "max_input_len": args.max_input_len,
             },
@@ -98,14 +100,10 @@ def create_engine(
         )
     else:
         model_module = PagedCacheModelModule(
-            args.model,
-            args.artifact_path,
-            args.quantization.name,
-            args.num_shards,
+            model_artifact_path,
             max_num_batched_tokens=args.max_num_batched_tokens,
             max_input_len=args.max_input_len,
         )
-
         return SynchronousInferenceEngine(
             model_module,
             max_batched_tokens=args.max_num_batched_tokens,
