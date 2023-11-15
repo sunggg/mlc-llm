@@ -6,7 +6,7 @@ import uvicorn
 #from mlc_llm import utils
 
 from .api import create_app
-from .engine import AsyncEngineConnector
+from .engine import AsyncEngineConnector, MLCServeEngineConfig
 from .engine.staging_engine import StagingInferenceEngine
 from .engine.sync_engine import SynchronousInferenceEngine
 from .model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
@@ -31,10 +31,11 @@ def parse_args():
     args.add_argument("--local-id", type=str, required=True)
     args.add_argument("--artifact-path", type=str, default="dist")
     args.add_argument("--use-staging-engine", action="store_true")
-    args.add_argument("--max-num-batched-tokens", type=int, default=-1)
+    args.add_argument("--max-batched-tokens", type=int, default=-1)
     args.add_argument("--max-input-len", type=int, default=-1)
     args.add_argument("--min-decode-steps", type=int, default=12)
     args.add_argument("--max-decode-steps", type=int, default=16)
+    args.add_argument("--prompt-allocate-ratio", type=float, default=2.0)
     args.add_argument("--debug-logging", action="store_true")
     parsed = args.parse_args()
     return parsed
@@ -83,32 +84,32 @@ def create_engine(
     model_artifact_path = os.path.join(args.artifact_path, args.local_id)
     if not os.path.exists(model_artifact_path):
         raise Exception(f"Invalid local id: {args.local_id}")
+
+    # Set the engine config
+    engine_config = MLCServeEngineConfig._from_json({
+        "use_staging_engine": args.use_staging_engine,
+        "max_batched_tokens": args.max_batched_tokens, 
+        "max_input_len": args.max_input_len,    
+        "min_decode_steps": args.min_decode_steps,
+        "max_decode_steps": args.max_decode_steps,
+        "prompt_allocate_ratio": args.prompt_allocate_ratio
+    })
   
     if args.use_staging_engine:
-        tokenizer_module = HfTokenizerModule(model_artifact_path)
         return StagingInferenceEngine(
-            tokenizer_module=tokenizer_module,
+            tokenizer_module=HfTokenizerModule(model_artifact_path),
             model_module_loader=PagedCacheModelModule,
             model_module_loader_kwargs={
                 "model_artifact_path": model_artifact_path,
-                "max_num_batched_tokens": args.max_num_batched_tokens,
-                "max_input_len": args.max_input_len,
+                "engine_config": engine_config,
             },
-            max_batched_tokens=args.max_num_batched_tokens,
-            min_decode_steps=args.min_decode_steps,
-            max_decode_steps=args.max_decode_steps,
         )
     else:
-        model_module = PagedCacheModelModule(
-            model_artifact_path,
-            max_num_batched_tokens=args.max_num_batched_tokens,
-            max_input_len=args.max_input_len,
-        )
         return SynchronousInferenceEngine(
-            model_module,
-            max_batched_tokens=args.max_num_batched_tokens,
-            min_decode_steps=args.min_decode_steps,
-            max_decode_steps=args.max_decode_steps,
+            PagedCacheModelModule(
+                model_artifact_path = model_artifact_path,
+                engine_config = engine_config,
+            )
         )
 
 

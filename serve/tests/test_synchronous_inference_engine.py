@@ -9,6 +9,7 @@ from mlc_serve.engine import (
     RequestOutput,
     SamplingParams,
     StoppingCriteria,
+    MLCServeEngineConfig
 )
 from mlc_serve.engine.model_module import (
     ConversationTemplate,
@@ -120,6 +121,11 @@ class DummaryModelModule:
         self.conversation_template = DummyConversationTemplate()
         self.text_generator = DummyTextGenerator()
         self.cache_manager = DummyCacheManager(max_cached_tokens)
+        self.engine_config = MLCServeEngineConfig._from_json({
+            "max_decode_steps": 0, 
+            "min_decode_steps": 0, 
+            "prompt_allocate_ratio": 1.0
+        })
 
 
 def create_messages(prompt) -> list[ChatMessage]:
@@ -136,9 +142,7 @@ def get_output_for_request(
 
 
 def test_single_request():
-    engine = SynchronousInferenceEngine(
-        DummaryModelModule(30), max_decode_steps=0, min_decode_steps=0
-    )
+    engine = SynchronousInferenceEngine(DummaryModelModule(30))
     request_id = "1"
     engine.add(
         [
@@ -159,9 +163,7 @@ def test_single_request():
 
 
 def test_single_request_step_to_finish():
-    engine = SynchronousInferenceEngine(
-        DummaryModelModule(30), max_decode_steps=0, min_decode_steps=0
-    )
+    engine = SynchronousInferenceEngine(DummaryModelModule(30))
 
     request_id = "1"
     engine.add(
@@ -183,12 +185,7 @@ def test_single_request_step_to_finish():
 
 
 def test_multiple_requests_wait_queue():
-    engine = SynchronousInferenceEngine(
-        DummaryModelModule(20),
-        max_decode_steps=0,
-        min_decode_steps=0,
-        prompt_allocate_ratio=1.0,
-    )
+    engine = SynchronousInferenceEngine(DummaryModelModule(20))
 
     request_id_1 = "1"
     request_id_2 = "2"
@@ -234,12 +231,7 @@ def test_multiple_requests_wait_queue():
 
 
 def test_multiple_requests_preempt():
-    engine = SynchronousInferenceEngine(
-        DummaryModelModule(30),
-        max_decode_steps=0,
-        min_decode_steps=0,
-        prompt_allocate_ratio=1.0,
-    )
+    engine = SynchronousInferenceEngine(DummaryModelModule(30))
 
     request_id_1 = "1"
     request_id_2 = "2"

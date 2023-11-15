@@ -12,6 +12,7 @@ from mlc_serve.engine import (
     Request,
     SamplingParams,
     StoppingCriteria,
+    MLCServeEngineConfig
 )
 from mlc_serve.engine.staging_engine import StagingInferenceEngine
 from mlc_serve.engine.sync_engine import SynchronousInferenceEngine
@@ -98,48 +99,46 @@ def run_mlc(
 def create_engine_and_tokenizer_module(
     args: argparse.Namespace,
 ):
+    engine_config = MLCServeEngineConfig._from_json({
+        "use_staging_engine": args.use_staging_engine,
+        "max_batched_tokens": args.max_batched_tokens, 
+        "max_input_len": args.max_input_len,    
+        "min_decode_steps": args.min_decode_steps,
+        "max_decode_steps": args.max_decode_steps,
+        "prompt_allocate_ratio": args.prompt_allocate_ratio
+    })
+
     if args.use_staging_engine:
-        tokenizer_module = HfTokenizerModule(args.model, args.artifact_path)
         engine = StagingInferenceEngine(
-            tokenizer_module=tokenizer_module,
+            tokenizer_module=HfTokenizerModule(args.model_artifact_path),
             model_module_loader=PagedCacheModelModule,
             model_module_loader_kwargs={
                 "model_artifact_path": args.model_artifact_path,
-                "max_num_batched_tokens": args.max_num_batched_tokens,
-                "max_input_len": args.max_input_len,
+                "engine_config": engine_config,
             },
-            max_batched_tokens=args.max_num_batched_tokens,
-            min_decode_steps=args.min_decode_steps,
-            max_decode_steps=args.max_decode_steps,
         )
         engine.start()
+        tokenizer = engine.tokenizer
     else:
-        model_module = PagedCacheModelModule(
-            model_artifact_path = args.model_artifact_path,
-            max_num_batched_tokens=args.max_num_batched_tokens,
-            max_input_len=args.max_input_len,
-        )
-        tokenizer_module = model_module
-
         engine = SynchronousInferenceEngine(
-            model_module,
-            max_batched_tokens=args.max_num_batched_tokens,
-            min_decode_steps=args.min_decode_steps,
-            max_decode_steps=args.max_decode_steps,
-        )
+            PagedCacheModelModule(
+                model_artifact_path = args.model_artifact_path,
+                engine_config = engine_config,
+        ))
+        tokenizer = engine.tokenizer
 
-    return engine, tokenizer_module
+    return engine, tokenizer
 
 
 def main(args: argparse.Namespace):
     print(args)
     random.seed(args.seed)
 
-    engine, tokenizer_module = create_engine_and_tokenizer_module(args)
+    engine, tokenizer = create_engine_and_tokenizer_module(args)
 
     # Sample the requests.
     requests = sample_requests(
-        args.dataset, args.num_prompts, tokenizer_module.tokenizer._tokenizer
+        args.dataset, args.num_prompts, tokenizer._tokenizer
     )
 
     elapsed_time = run_mlc(
@@ -179,12 +178,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--local-id", type=str, required=True)
     parser.add_argument("--artifact-path", type=str, default="dist")
-    #parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--use-staging-engine", action="store_true")
-    parser.add_argument("--max-num-batched-tokens", type=int, default=-1)
+    parser.add_argument("--max-batched-tokens", type=int, default=-1)
     parser.add_argument("--max-input-len", type=int, default=-1)
     parser.add_argument("--min-decode-steps", type=int, default=32)
     parser.add_argument("--max-decode-steps", type=int, default=56)
+    parser.add_argument("--prompt-allocate-ratio", type=float, default=2.0)
     parser.add_argument(
         "--num-prompts", type=int, default=1000, help="Number of prompts to process."
     )

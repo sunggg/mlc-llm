@@ -53,22 +53,18 @@ class GenerationLoopWorker:
     def __init__(
         self,
         model_module: ModelModule,
-        max_batched_tokens: int = 2560,
-        min_decode_steps: int = 32,
-        max_decode_steps: int = 48,
-        prompt_allocate_ratio: float = 2.0,
     ):
         self.text_generator = model_module.text_generator
         self.cache_manager = model_module.cache_manager
         self.tokenizer = model_module.tokenizer
 
-        self.max_batched_tokens = max_batched_tokens
+        self.max_batched_tokens = model_module.engine_config.max_batched_tokens
         self.max_decode_steps = min(
-            self.cache_manager.get_kv_cache_size(), max_decode_steps
+            self.cache_manager.get_kv_cache_size(), model_module.engine_config.max_decode_steps
         )
-        self.min_decode_steps = min(self.max_decode_steps - 1, min_decode_steps)
-        self.prompt_allocate_ratio = prompt_allocate_ratio
-        assert prompt_allocate_ratio >= 1.0
+        self.min_decode_steps = min(self.max_decode_steps - 1, model_module.engine_config.min_decode_steps)
+        self.prompt_allocate_ratio = model_module.engine_config.prompt_allocate_ratio
+        assert self.prompt_allocate_ratio >= 1.0
 
         self.queue_lock = Lock()
         self.queue = deque[RequestState]()
@@ -329,7 +325,6 @@ def setup_logging(level):
 def run_generation_loop_worker(
     model_module_loader: Callable[..., ModelModule],
     model_module_loader_kwargs: dict,
-    worker_kwargs: dict,
     command_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     ready_event: multiprocessing.Event,
@@ -337,7 +332,7 @@ def run_generation_loop_worker(
 ):
     setup_logging(log_level)
     model_module = model_module_loader(**model_module_loader_kwargs)
-    worker = GenerationLoopWorker(model_module=model_module, **worker_kwargs)
+    worker = GenerationLoopWorker(model_module=model_module)
 
     should_stop = False
 

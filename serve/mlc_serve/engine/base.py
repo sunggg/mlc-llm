@@ -1,10 +1,44 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
-
+from typing import Optional, List
+import json
+import inspect
 from .sampling_params import SamplingParams, SamplingType
 
 RequestId = str
+
+@dataclass
+class MLCServeEngineConfig:
+    # The maximum number of tokens in the batch.
+    # TODO(@sunggg): figure out better defaults
+    # from sync engine
+    # max_batched_tokens: int = 2560,
+    # min_decode_steps: int = 100,
+    # max_decode_steps: int = 300,
+    # prompt_allocate_ratio: float = 2.0,
+
+    # from staging engine
+    # max_batched_tokens: int = 2560,
+    # min_decode_steps: int = 32,
+    # max_decode_steps: int = 48,
+    # prompt_allocate_ratio: float = 2.0,
+    
+    use_staging_engine: bool = True
+    max_batched_tokens: int = 2560
+    max_input_len: int = 2560
+    min_decode_steps: int = 32
+    max_decode_steps: int = 48
+    prompt_allocate_ratio: float = 2.0
+
+    @classmethod
+    def _from_json(config_cls, json_obj: dict):
+        return config_cls(
+            **{
+                k: v
+                for k, v in json_obj.items()
+                if k in inspect.signature(config_cls).parameters
+            }
+        )
 
 
 @dataclass
@@ -14,7 +48,7 @@ class StoppingCriteria:
     """
 
     max_tokens: Optional[int]
-    stop_sequences: Optional[list[str]]
+    stop_sequences: Optional[list[str]] = None
 
 
 @dataclass

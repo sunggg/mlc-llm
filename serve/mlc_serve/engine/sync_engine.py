@@ -19,7 +19,8 @@ from .base import (
     SamplingParams,
     SequenceOutput,
     StoppingCriteria,
-    check_stopping_sequences
+    check_stopping_sequences,
+    MLCServeEngineConfig
 )
 from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
 
@@ -35,23 +36,19 @@ class SynchronousInferenceEngine(InferenceEngine):
     def __init__(
         self,
         model_module: ModelModule,
-        max_batched_tokens: int = 2560,
-        min_decode_steps: int = 100,
-        max_decode_steps: int = 300,
-        prompt_allocate_ratio: float = 2.0,
     ):
         self.text_generator = model_module.text_generator
         self.tokenizer = model_module.tokenizer
         self.conversation_template = model_module.conversation_template
         self.cache_manager = model_module.cache_manager
 
-        self.max_batched_tokens = max_batched_tokens
+        self.max_batched_tokens = model_module.engine_config.max_batched_tokens
         self.max_decode_steps = min(
-            self.cache_manager.get_kv_cache_size(), max_decode_steps
+            self.cache_manager.get_kv_cache_size(), model_module.engine_config.max_decode_steps
         )
-        self.min_decode_steps = min(self.max_decode_steps - 1, min_decode_steps)
-        self.prompt_allocate_ratio = prompt_allocate_ratio
-        assert prompt_allocate_ratio >= 1.0
+        self.min_decode_steps = min(self.max_decode_steps - 1, model_module.engine_config.min_decode_steps)
+        self.prompt_allocate_ratio = model_module.engine_config.prompt_allocate_ratio
+        assert self.prompt_allocate_ratio >= 1.0
 
         self.queue_lock = Lock()
         self.queue = deque[RequestState]()

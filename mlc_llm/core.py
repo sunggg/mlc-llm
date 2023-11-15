@@ -863,35 +863,35 @@ def build_model_from_args(args: argparse.Namespace):
                         vocab_size=config["vocab_size"],
                         max_window_size=model_config.max_sequence_length,
                     )
-            else:
-                # when batching is enabled, we dump info for mlc_serve runtime
-                dump_build_config(args)
-                model_info_path = os.path.join(args.artifact_path, "model")
-                os.makedirs(model_info_path, exist_ok=True)
-                mlc_model_config_path = os.path.join(model_info_path, "mlc-model-config.json")
 
-                
-                max_context_length = args.max_seq_len
-                if args.max_seq_len == -1:
-                    # for llama-1 family
-                    if "max_sequence_length" in config:
-                        max_context_length = config["max_sequence_length"]
-                    # for llama-2, mistral, etc.
-                    elif "max_position_embeddings" in config:
-                        max_context_length = config["max_position_embeddings"]
-                    else:
-                        raise Exception("The model config should contain information about maximum context length.")
+        if args.enable_batching:
+            # when batching is enabled, we dump info for mlc_serve runtime
+            dump_build_config(args)
+            model_info_path = os.path.join(args.artifact_path, "model")
+            os.makedirs(model_info_path, exist_ok=True)
+            mlc_model_config_path = os.path.join(model_info_path, "mlc-model-config.json")
 
-                # Overwrite some configs
-                config["max_context_length"] = max_context_length
-                if args.sliding_window != -1 and "sliding_window" in config:
-                    config["sliding_window"] = args.sliding_window
+            max_context_length = args.max_seq_len
+            if args.max_seq_len == -1:
+                # for llama-1 family
+                if "max_sequence_length" in config:
+                    max_context_length = config["max_sequence_length"]
+                # for llama-2, mistral, etc.
+                elif "max_position_embeddings" in config:
+                    max_context_length = config["max_position_embeddings"]
+                else:
+                    raise Exception("The model config should contain information about maximum context length.")
 
-                # copy hf config into mlc_model_config
-                mlc_model_config = config.copy()
-                
-                with open(mlc_model_config_path, "w", encoding="utf-8") as outfile:
-                    json.dump(mlc_model_config, outfile, indent=4)
+            # Overwrite some configs
+            config["max_context_length"] = max_context_length
+            if args.sliding_window != -1 and "sliding_window" in config:
+                config["sliding_window"] = args.sliding_window
+
+            # copy hf config into mlc_model_config
+            mlc_model_config = config.copy()
+            
+            with open(mlc_model_config_path, "w", encoding="utf-8") as outfile:
+                json.dump(mlc_model_config, outfile, indent=4)
 
         if args.model_category != "minigpt":
             utils.copy_tokenizer(args)

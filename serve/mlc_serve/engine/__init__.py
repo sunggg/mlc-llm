@@ -10,5 +10,6 @@ from .base import (
     RequestId,
     RequestOutput,
     StoppingCriteria,
+    MLCServeEngineConfig
 )
 from .sampling_params import SamplingParams, SamplingType

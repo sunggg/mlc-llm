@@ -10,14 +10,15 @@ import inspect
 import numpy as np
 import torch
 import tvm
-from transformers import AutoTokenizer
 from tvm import relax
 from tvm.runtime import disco as di
 
 from mlc_llm import utils
 from mlc_llm.relax_model.llama import LlamaConfig
 
-from ..engine import ChatMessage, RequestId, SamplingType
+from .base import get_model_artifact_config
+from .tokenizer import HfTokenizerModule
+from ..engine import ChatMessage, RequestId, SamplingType, MLCServeEngineConfig
 from ..engine.model_module import (
     DecodeRequest,
     PrefillRequest,
@@ -596,9 +597,6 @@ class Model:
         torch.cuda.synchronize()
         torch.cuda.nvtx.range_pop()
 
-        print(self.vocab_size, logits)
-        print(sampling_params)
-
         next_tokens = sample(logits, sampling_params, self.vocab_size)
 
         return [
@@ -652,93 +650,16 @@ class PagedCacheModelTextGenerator:
         return out
 
 
-class Tokenizer:
-    def __init__(self, hf_tokenizer):
-        self._tokenizer = hf_tokenizer
-        self.eos_token_id = self._tokenizer.eos_token_id
-
-    def encode(self, text: str) -> list[int]:
-        return self._tokenizer.encode(text)
-
-    def decode(self, tokens: list[int]) -> str:
-        return self._tokenizer.decode(tokens, skip_special_tokens=True)
-
-
-class ConversationTemplate:
-    def __init__(self, hf_tokenizer):
-        self._tokenizer = hf_tokenizer
-
-    def apply(self, messages: list[ChatMessage]) -> str:
-        return self._tokenizer.apply_chat_template(
-            [
-                {"role": message.role, "content": message.content}
-                for message in messages
-            ],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-
-
-
-
-
-class HfTokenizerModule:
-    def __init__(self, model_artifact_path: str):
-        hf_tokenizer = AutoTokenizer.from_pretrained(
-            os.path.join(model_artifact_path, "model"),
-            trust_remote_code=False,
-        )
-        self.tokenizer = Tokenizer(hf_tokenizer)
-        self.conversation_template = ConversationTemplate(hf_tokenizer)
-
-
-@dataclass
-class ModelArtifactConfig:
-    model_artifact_path: Optional[str] = None
-    num_shards: Optional[int] = None
-    quantization: Optional[str] = None
-    model_type: Optional[str] = None
-    library_name: Optional[str] = None
-    max_context_length: Optional[int] = None
-    vocab_size: Optional[int] = None
-    sliding_window: Optional[int] = None
-    build_options: Optional[str] = None
-    num_key_value_heads: Optional[int] = None
-    num_attention_heads: Optional[int] = None
-    num_hidden_layers: Optional[int] = None
-    hidden_size: Optional[int] = None
-
-    @classmethod
-    def _from_json(config_cls, json_obj: dict):
-        return config_cls(
-            **{
-                k: v
-                for k, v in json_obj.items()
-                if k in inspect.signature(config_cls).parameters
-            }
-        )
-
-def get_model_artifact_config(model_artifact_path):
-    json_object = {"model_artifact_path": model_artifact_path}
-    for config_file_name in [ 
-        "build_config.json",
-        "model/mlc-model-config.json"
-    ]:
-        config_file_path = os.path.join(model_artifact_path, config_file_name)
-        assert os.path.exists(config_file_path), f"{config_file_path} should exist. Did you build with `--enable-batching`?"
-        with open(config_file_path, mode="rt", encoding="utf-8") as f:
-            json_object.update(json.load(f))
-    
-    return ModelArtifactConfig._from_json(json_object)
-
-
 class PagedCacheModelModule:
     def __init__(
         self,
         model_artifact_path: str, 
-        max_num_batched_tokens: int = 0,
-        max_input_len: int = 0,
+        engine_config: MLCServeEngineConfig, 
+        #max_batched_tokens: int = 0,
+        #max_input_len: int = 0,
     ):
+        self.engine_config = engine_config
+        max_batched_tokens, max_input_len = engine_config.max_batched_tokens, engine_config.max_input_len
         model_artifact_config = get_model_artifact_config(model_artifact_path)  
         dev = tvm.device("cuda", 0)
 
@@ -750,11 +671,11 @@ class PagedCacheModelModule:
         num_kv_heads = model_artifact_config.num_key_value_heads // model_artifact_config.num_shards
         head_size = model_artifact_config.hidden_size // model_artifact_config.num_attention_heads
 
-        if max_num_batched_tokens > 0:
+        if max_batched_tokens > 0:
             assert max_input_len > 0
-            assert max_num_batched_tokens % max_input_len == 0  # for simplicity
+            assert max_batched_tokens % max_input_len == 0  # for simplicity
 
-            num_seqs = max_num_batched_tokens // max_input_len
+            num_seqs = max_batched_tokens // max_input_len
             num_blocks = get_num_cache_blocks(
                 model,
                 [max_input_len] * num_seqs,
