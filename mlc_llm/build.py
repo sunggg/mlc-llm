@@ -40,7 +40,7 @@ def main():
         # Post processing of arguments
         parsed_args = core._parse_args(parsed_args)  # pylint: disable=protected-access
 
-        # if num_shard>2 without -convert-weight-only or --build-model-only, we implicitly run it sequentially 
+        # if num_shard>1 without -convert-weight-only or --build-model-only, we implicitly run it sequentially 
         if parsed_args.num_shards > 1 and not (parsed_args.build_model_only or parsed_args.convert_weight_only):
             parsed_args.build_model_only = True
             parsed_args.convert_weight_only = False # just to be explicit
