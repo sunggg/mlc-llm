@@ -6,7 +6,7 @@ import uvicorn
 #from mlc_llm import utils
 
 from .api import create_app
-from .engine import AsyncEngineConnector, MLCServeEngineConfig
+from .engine import AsyncEngineConnector, get_engine_config
 from .engine.staging_engine import StagingInferenceEngine
 from .engine.sync_engine import SynchronousInferenceEngine
 from .model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
@@ -31,7 +31,7 @@ def parse_args():
     args.add_argument("--local-id", type=str, required=True)
     args.add_argument("--artifact-path", type=str, default="dist")
     args.add_argument("--use-staging-engine", action="store_true")
-    args.add_argument("--max-batched-tokens", type=int, default=-1)
+    args.add_argument("--max-num-batched-tokens", type=int, default=-1)
     args.add_argument("--max-input-len", type=int, default=-1)
     args.add_argument("--min-decode-steps", type=int, default=12)
     args.add_argument("--max-decode-steps", type=int, default=16)
@@ -75,20 +75,22 @@ def setup_logging(args):
 def create_engine(
     args: argparse.Namespace,
 ):
-    # `model_artifact_path` has the following structure
-    #  |- compiled artifact (.so)
-    #  |- `build_config.json`: stores compile-time info, such as `num_shards` and `quantization`. 
-    #  |- params/ : stores weights in mlc format and `ndarray-cache.json`. 
-    #  |            `ndarray-cache.json` is especially important for Disco.
-    #  |- model/ : stores info from hf model cards such as max context length and tokenizer
+    """
+      `model_artifact_path` has the following structure
+      |- compiled artifact (.so)
+      |- `build_config.json`: stores compile-time info, such as `num_shards` and `quantization`. 
+      |- params/ : stores weights in mlc format and `ndarray-cache.json`. 
+      |            `ndarray-cache.json` is especially important for Disco.
+      |- model/ : stores info from hf model cards such as max context length and tokenizer
+    """
     model_artifact_path = os.path.join(args.artifact_path, args.local_id)
     if not os.path.exists(model_artifact_path):
         raise Exception(f"Invalid local id: {args.local_id}")
 
     # Set the engine config
-    engine_config = MLCServeEngineConfig._from_json({
+    engine_config = get_engine_config({
         "use_staging_engine": args.use_staging_engine,
-        "max_batched_tokens": args.max_batched_tokens, 
+        "max_num_batched_tokens": args.max_num_batched_tokens, 
         "max_input_len": args.max_input_len,    
         "min_decode_steps": args.min_decode_steps,
         "max_decode_steps": args.max_decode_steps,

@@ -7,25 +7,15 @@ from .sampling_params import SamplingParams, SamplingType
 
 RequestId = str
 
+# TODO(@sunggg): consider transition to something like Pydantic
 @dataclass
 class MLCServeEngineConfig:
     # The maximum number of tokens in the batch.
     # TODO(@sunggg): figure out better defaults
-    # from sync engine
-    # max_batched_tokens: int = 2560,
-    # min_decode_steps: int = 100,
-    # max_decode_steps: int = 300,
-    # prompt_allocate_ratio: float = 2.0,
-
-    # from staging engine
-    # max_batched_tokens: int = 2560,
-    # min_decode_steps: int = 32,
-    # max_decode_steps: int = 48,
-    # prompt_allocate_ratio: float = 2.0,
-    
     use_staging_engine: bool = True
-    max_batched_tokens: int = 2560
-    max_input_len: int = 2560
+    max_num_batched_tokens: int = 4096
+    max_input_len: int = 512
+    max_num_sequences: int = 8
     min_decode_steps: int = 32
     max_decode_steps: int = 48
     prompt_allocate_ratio: float = 2.0
@@ -40,6 +30,22 @@ class MLCServeEngineConfig:
             }
         )
 
+def get_engine_config(dict_config, enable_check = True):
+    engine_config = MLCServeEngineConfig._from_json(dict_config)
+    # Checks to make sure engine configs are set correctly
+    # since engine config is critical to the performance
+    if enable_check:
+        # TODO(@sunggg): engine allows -1 for these params. figure out the behavior and enable checks properly
+        # assert engine_config.max_num_batched_tokens > 0
+        # assert engine_config.max_input_len > 0
+        # assert engine_config.max_num_sequences > 0
+        # assert engine_config.max_num_sequences * engine_config.max_input_len == engine_config.max_num_batched_tokens
+
+        assert (engine_config.min_decode_steps > 0) and (engine_config.max_decode_steps > 0) 
+        assert engine_config.max_decode_steps > engine_config.min_decode_steps
+        assert engine_config.prompt_allocate_ratio > 0
+    
+    return engine_config
 
 @dataclass
 class StoppingCriteria:

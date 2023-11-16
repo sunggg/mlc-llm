@@ -12,7 +12,7 @@ from mlc_serve.engine import (
     DebugOptions,
     SamplingParams,
     StoppingCriteria,
-    MLCServeEngineConfig
+    get_engine_config
 )
 from mlc_serve.engine.staging_engine import StagingInferenceEngine
 from mlc_serve.engine.sync_engine import SynchronousInferenceEngine
@@ -23,17 +23,17 @@ def test(args: argparse.Namespace):
     # Examples. "--max-output-len" can be used to specify the number of output tokens.
     #
     # Profile the gpu memory usage, and use the maximum number of cache blocks possible:
-    # python serve/tests/test_engine_paged_cache_model.py --local-id vicuna-v1-7b-q4f16_ft --max-batched-tokens 2560 --max-input-len 256
+    # python serve/tests/test_engine_paged_cache_model.py --local-id vicuna-v1-7b-q4f16_ft --max-num-batched-tokens 2560 --max-input-len 256
     #
     # Mistral:
-    # python serve/tests/test_engine_paged_cache_model.py  --local-id Mistral-7B-v0.1-q0f16 --long-prompt --max-batched-tokens 24000 --max-input-len 8000 --max-output-len 20
+    # python serve/tests/test_engine_paged_cache_model.py  --local-id Mistral-7B-v0.1-q0f16 --long-prompt --max-num-batched-tokens 24000 --max-input-len 8000 --max-output-len 20
     #
     # Disco:
     # python serve/tests/test_engine_paged_cache_model.py --local-id vicuna-v1-7b-q0f16-presharded-gpu2
 
-    engine_config = MLCServeEngineConfig._from_json({
+    engine_config = get_engine_config({
         "use_staging_engine": args.use_staging_engine,
-        "max_batched_tokens": args.max_batched_tokens, 
+        "max_num_batched_tokens": args.max_num_batched_tokens, 
         "max_input_len": args.max_input_len,    
         "min_decode_steps": args.min_decode_steps,
         "max_decode_steps": args.max_decode_steps,
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--local-id", type=str, required=True)
     parser.add_argument("--artifact-path", type=str, default="dist")
     parser.add_argument("--num-shards", type=int, default=1)
-    parser.add_argument("--max-batched-tokens", type=int, default=-1)
+    parser.add_argument("--max-num-batched-tokens", type=int, default=-1)
     parser.add_argument("--max-input-len", type=int, default=-1)
     parser.add_argument("--max-output-len", type=int, default=20)
     parser.add_argument("--prompt-allocate-ratio", type=float, default=2.0)

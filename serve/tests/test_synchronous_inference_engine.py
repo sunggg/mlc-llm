@@ -9,8 +9,9 @@ from mlc_serve.engine import (
     RequestOutput,
     SamplingParams,
     StoppingCriteria,
-    MLCServeEngineConfig
+    get_engine_config
 )
+from mlc_serve.model.base import ModelArtifactConfig
 from mlc_serve.engine.model_module import (
     ConversationTemplate,
     DecodeRequest,
@@ -121,11 +122,14 @@ class DummaryModelModule:
         self.conversation_template = DummyConversationTemplate()
         self.text_generator = DummyTextGenerator()
         self.cache_manager = DummyCacheManager(max_cached_tokens)
-        self.engine_config = MLCServeEngineConfig._from_json({
+        self.model_artifact_config = ModelArtifactConfig._from_json({
+            "max_context_length": 1024,
+        })
+        self.engine_config = get_engine_config({
             "max_decode_steps": 0, 
             "min_decode_steps": 0, 
             "prompt_allocate_ratio": 1.0
-        })
+        }, enable_check = False)
 
 
 def create_messages(prompt) -> list[ChatMessage]:

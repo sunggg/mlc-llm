@@ -19,8 +19,7 @@ from .base import (
     SamplingParams,
     SequenceOutput,
     StoppingCriteria,
-    check_stopping_sequences,
-    MLCServeEngineConfig
+    check_stopping_sequences
 )
 from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
 
@@ -43,7 +42,7 @@ class SynchronousInferenceEngine(InferenceEngine):
         self.cache_manager = model_module.cache_manager
         self.model_artifact_config = model_module.model_artifact_config
 
-        self.max_batched_tokens = model_module.engine_config.max_batched_tokens
+        self.max_num_batched_tokens = model_module.engine_config.max_num_batched_tokens
         self.max_decode_steps = min(
             self.cache_manager.get_kv_cache_size(), model_module.engine_config.max_decode_steps
         )
@@ -239,9 +238,9 @@ class SynchronousInferenceEngine(InferenceEngine):
                 state = self.queue[0]
                 num_tokens = len(state.token_ids)
                 num_new_batched_tokens += num_tokens
-                if num_new_batched_tokens > self.max_batched_tokens > 0:
+                if num_new_batched_tokens > self.max_num_batched_tokens > 0:
                     logger.debug(
-                        "Stop growing the batch due to max_batched_tokens. Batched tokens: %s",
+                        "Stop growing the batch due to max_num_batched_tokens. Batched tokens: %s",
                         num_new_batched_tokens,
                     )
                     break

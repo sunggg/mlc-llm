@@ -4,6 +4,7 @@ import os
 import json
 import inspect
 
+# TODO(@sunggg): consider transition to something like Pydantic
 @dataclass
 class ModelArtifactConfig:
     model_artifact_path: Optional[str] = None
