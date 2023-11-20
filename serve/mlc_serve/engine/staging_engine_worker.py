@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from threading import Condition, Lock, Thread
 from typing import Callable, Optional, Union, Any
 
-from .base import FinishReason, RequestId, RequestState
+from .base import FinishReason, RequestId, RequestState, check_stopping_sequences
 from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
 
 
+#logging.basicConfig(filename='example.log', filemode='w')
 logger = logging.getLogger(__name__)
+#logger.setLevel(logging.DEBUG)
 
 @dataclass
 class ShutdownCommand:
@@ -113,7 +115,7 @@ class GenerationLoopWorker:
         return self.queue or self.current_batch or self.cancelled_requests
 
     def step(self) -> GenerationLoopWorkerOutput:
-        logger.debug("Starting new inference step.")
+        logger.info("Starting new inference step.")
 
         outputs = list[SequenceGenerationOutput]()
         result = GenerationLoopWorkerOutput(sequences=outputs)
@@ -163,7 +165,7 @@ class GenerationLoopWorker:
 
         requests = self._get_requests_to_process()
         results = self.text_generator.generate(requests, self.cache_manager.get_cache())
-        logger.debug("Finished text generation.")
+        logger.info("Finished text generation.")
 
         for res in results:
             # For now we only support single sequence per request
@@ -183,20 +185,41 @@ class GenerationLoopWorker:
             state = self.current_batch[request_id]
             state.next_start_position = len(state.token_ids)
             new_tokens = res.generated_tokens
+
+            # Need to match at the token-id level
             for i, token_id in enumerate(new_tokens):
-                if (
-                    token_id == self.tokenizer.eos_token_id
-                    and not state.debug_options.ignore_eos
-                ):
-                    new_tokens = new_tokens[:i]
+                if (token_id == self.tokenizer.eos_token_id
+                    and not state.debug_options.ignore_eos):
+                    new_tokens = new_tokens[:i+1]
                     state.is_ended = True
                     break
+                
+                list_stop_token_ids = state.stopping_criteria.list_stop_token_ids
+                if list_stop_token_ids:
+                    for stop_token_ids in list_stop_token_ids:
+                        num = len(stop_token_ids)
+                        #TODO: currently, it seems tricky to see multiple generation tokens within the worker.
+                        assert num == 1
+
+                        # TODO(@team): any better way?
+                        found = (len(new_tokens[i:i+num]) == num) and all([ n1==n2 for n1, n2 in zip(new_tokens[i:i+num], stop_token_ids)])
+                        if found:
+                            new_tokens = new_tokens[:i+num]
+                            state.is_ended = True
+                            break
+                    
+                    if state.is_ended:
+                        break
+                #if token_id == state.stopping_criteria.list_stop_token_ids[0][-1]:
+                #    new_tokens = new_tokens[:i+1]
+                #    state.is_ended = True
+                #    break
             state.token_ids.extend(new_tokens)
             outputs.append(
                 SequenceGenerationOutput(id=res.sequence_id, new_tokens=new_tokens)
             )
 
-        logger.debug("Finished state update and stopping criteria check.")
+        logger.info("Finished state update and stopping criteria check.")
 
         return result
 
@@ -208,13 +231,13 @@ class GenerationLoopWorker:
                 )
                 self._remove_request_from_batch(request_to_remove.request_id)
                 self.queue.appendleft(request_to_remove)
-                logger.debug(
+                logger.info(
                     "Preempt request to free %s tokens",
                     len(request_to_remove.token_ids),
                 )
 
             if self.cache_manager.get_max_new_tokens() <= self.max_decode_steps:
-                logger.debug(
+                logger.info(
                     "Skip growing the batch due to max_decode_steps. Decode steps: %s",
                     self.cache_manager.get_max_new_tokens(),
                 )
@@ -224,7 +247,7 @@ class GenerationLoopWorker:
             while self.queue:
                 max_new_tokens = self.cache_manager.get_max_new_tokens()
                 if max_new_tokens < self.min_decode_steps:
-                    logger.debug(
+                    logger.info(
                         "Stop growing the batch due to min_decode_steps. Decode steps: %s",
                         max_new_tokens,
                     )
@@ -234,7 +257,7 @@ class GenerationLoopWorker:
                 num_tokens = len(state.token_ids)
                 num_new_batched_tokens += num_tokens
                 if num_new_batched_tokens > self.max_num_batched_tokens > 0:
-                    logger.debug(
+                    logger.info(
                         "Stop growing the batch due to max_num_batched_tokens. Batched tokens: %s",
                         num_new_batched_tokens,
                     )
@@ -243,7 +266,7 @@ class GenerationLoopWorker:
                     self.cache_manager.get_free_space()
                     <= self.prompt_allocate_ratio * num_tokens
                 ):
-                    logger.debug(
+                    logger.info(
                         "Stop growing the batch due to not enough free space. Free: %s, Num tokens: %s",
                         self.cache_manager.get_free_space(),
                         num_tokens,
@@ -277,7 +300,7 @@ class GenerationLoopWorker:
                             sampling_params=state.sampling_params,
                         )
                     )
-            logger.debug(
+            logger.info(
                 "Creating prompt batch with %s requests with %s total tokens.",
                 len(requests),
                 sum(len(r.token_ids) for r in requests),
@@ -295,7 +318,7 @@ class GenerationLoopWorker:
                 self.cache_manager.extend(
                     seq_id, len(state.token_ids) - state.next_start_position
                 )
-            logger.debug("Creating decode batch with %s requests.", len(requests))
+            logger.info("Creating decode batch with %s requests.", len(requests))
 
         return requests
 
