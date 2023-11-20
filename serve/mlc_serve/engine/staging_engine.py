@@ -190,10 +190,12 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                 state.output_text += delta
 
                 
-                #state.output_text, delta, state.is_ended = check_stopping_sequences(state.stopping_criteria,
-                #                                                                state.output_text,
-                #                                                                delta,
-                #                                                                state.is_ended)
+                state.output_text, delta, state.is_ended = check_stopping_sequences(state.stopping_criteria,
+                                                                                state.output_text,
+                                                                                delta,
+                                                                                state.is_ended)
+                if state.is_ended:
+                    self.cancel(state.request_id)
                 
                 outputs.append(
                     RequestOutput(

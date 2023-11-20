@@ -193,7 +193,7 @@ class GenerationLoopWorker:
                     new_tokens = new_tokens[:i+1]
                     state.is_ended = True
                     break
-                
+                """
                 list_stop_token_ids = state.stopping_criteria.list_stop_token_ids
                 if list_stop_token_ids:
                     for stop_token_ids in list_stop_token_ids:
@@ -210,10 +210,7 @@ class GenerationLoopWorker:
                     
                     if state.is_ended:
                         break
-                #if token_id == state.stopping_criteria.list_stop_token_ids[0][-1]:
-                #    new_tokens = new_tokens[:i+1]
-                #    state.is_ended = True
-                #    break
+                """
             state.token_ids.extend(new_tokens)
             outputs.append(
                 SequenceGenerationOutput(id=res.sequence_id, new_tokens=new_tokens)
