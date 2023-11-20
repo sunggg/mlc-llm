@@ -24,7 +24,7 @@ from .staging_engine_worker import (
     ShutdownCommand,
     run_generation_loop_worker,
 )
-
+#logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +76,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
         self.worker_process.join()
 
     def add(self, requests: list[Request]):
+        logger.info("Staging engine - add")
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
 
@@ -85,6 +86,23 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             if req.num_sequences > 1:
                 raise RuntimeError("num_sequences > 1 is not supported for now")
 
+            if req.stopping_criteria.stop_sequences and not req.stopping_criteria.list_stop_token_ids:
+                # TODO: verify tokenizer setting
+                list_stop_token_ids = []
+                for stop in req.stopping_criteria.stop_sequences:
+                    stop_token_ids = self.tokenizer._tokenizer.encode(stop, add_special_tokens=False, padding=False)
+                    # If there is a special token `SPIECE_UNDERLINE`, truncate it. 
+                    # You will see this for stop tokens like `\n`.
+                    # Currently, there is no easy way to disable its insertion, 
+                    # so manually truncate it. 
+                    # Related discussion: https://github.com/huggingface/transformers/issues/26273
+                    if stop_token_ids[0] == 29871:
+                        stop_token_ids = stop_token_ids[1:]
+                    # TODO: Currently, staging engine only can handle single-token stop strings. 
+                    # Extend it to multi-tokens
+                    assert len(stop_token_ids) == 1
+                    list_stop_token_ids.append(stop_token_ids)
+                req.stopping_criteria.list_stop_token_ids = list_stop_token_ids
             # If the request violates the tokenization, this returns None, so skip.
             state = self._get_new_request_state(req)
             new_request_states.append(state)
@@ -104,6 +122,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             return len(self.requests) > 0
 
     def wait_for_request(self, timeout_seconds=None) -> bool:
+        logger.info("Wait for request")
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
 
@@ -117,6 +136,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             return False
 
     def step(self) -> InferenceStepResult:
+        logger.info("Step")
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
         if not self.has_pending_requests():
@@ -145,6 +165,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                     continue
 
                 state = self.requests[request_id]
+                #logger.info(f"state: {state}")
 
                 if seq_output.error is not None:
                     outputs.append(
@@ -161,14 +182,16 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                 state.next_start_position = len(state.token_ids)
                 state.token_ids.extend(seq_output.new_tokens)
 
+                # detokenize
                 delta = self._decode_last_output(state)
                 state.output_text += delta
 
-                state.output_text, delta, state.is_ended = check_stopping_sequences(state.stopping_criteria,
-                                                                                state.output_text,
-                                                                                delta,
-                                                                                state.is_ended)
-
+                
+                #state.output_text, delta, state.is_ended = check_stopping_sequences(state.stopping_criteria,
+                #                                                                state.output_text,
+                #                                                                delta,
+                #                                                                state.is_ended)
+                
                 outputs.append(
                     RequestOutput(
                         request_id,
