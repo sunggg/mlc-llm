@@ -56,8 +56,6 @@ class StoppingCriteria:
     """
     max_tokens: Optional[int]
     stop_sequences: Optional[list[str]] = None
-    list_stop_token_ids: Optional[list[list[str]]] = None
-        
 
 @dataclass
 class ChatMessage:

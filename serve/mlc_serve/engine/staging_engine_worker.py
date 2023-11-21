@@ -11,7 +11,7 @@ from typing import Callable, Optional, Union, Any
 
 from .base import FinishReason, RequestId, RequestState, check_stopping_sequences
 from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
-import structlog
+
 
 #logging.basicConfig(filename='example.log', filemode='w')
 logger = logging.getLogger(__name__)
@@ -193,27 +193,7 @@ class GenerationLoopWorker:
                     new_tokens = new_tokens[:i+1]
                     state.is_ended = True
                     break
-                
-                list_stop_token_ids = state.stopping_criteria.list_stop_token_ids
-                if list_stop_token_ids:
-                    for stop_token_ids in list_stop_token_ids:
-                        num = len(stop_token_ids)
-                        #TODO: currently, it seems tricky to see multiple generation tokens within the worker.
-                        assert num == 1
 
-                        # TODO(@team): any better way?
-                        found = (len(new_tokens[i:i+num]) == num) and all([ n1==n2 for n1, n2 in zip(new_tokens[i:i+num], stop_token_ids)])
-                        if found:
-                            new_tokens = new_tokens[:i+num]
-                            state.is_ended = True
-                            break
-                    
-                    if state.is_ended:
-                        break
-                #if token_id == state.stopping_criteria.list_stop_token_ids[0][-1]:
-                #    new_tokens = new_tokens[:i+1]
-                #    state.is_ended = True
-                #    break
             state.token_ids.extend(new_tokens)
             outputs.append(
                 SequenceGenerationOutput(id=res.sequence_id, new_tokens=new_tokens)

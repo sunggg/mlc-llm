@@ -24,7 +24,6 @@ from .staging_engine_worker import (
     ShutdownCommand,
     run_generation_loop_worker,
 )
-#logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -65,11 +64,14 @@ class StagingInferenceEngine(ScopedInferenceEngine):
         )
 
     def start(self):
-        self.worker_process.start()
-        if not self.ready_event.wait(timeout=180):
-            raise RuntimeError(
-                "StagingInferenceEngine worker is not ready before timeout."
-            )
+        try:
+            self.worker_process.start()
+            if not self.ready_event.wait(timeout=90):
+                raise RuntimeError(
+                    "StagingInferenceEngine worker is not ready before timeout."
+                )
+        except:
+            raise RuntimeError("Failed to start StagingInferenceEngine worker process.")
 
     def stop(self):
         self.command_queue.put(ShutdownCommand())
@@ -86,23 +88,12 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             if req.num_sequences > 1:
                 raise RuntimeError("num_sequences > 1 is not supported for now")
 
-            if req.stopping_criteria.stop_sequences and not req.stopping_criteria.list_stop_token_ids:
-                # TODO: verify tokenizer setting
-                list_stop_token_ids = []
-                for stop in req.stopping_criteria.stop_sequences:
-                    stop_token_ids = self.tokenizer._tokenizer.encode(stop, add_special_tokens=False, padding=False)
-                    # If there is a special token `SPIECE_UNDERLINE`, truncate it. 
-                    # You will see this for stop tokens like `\n`.
-                    # Currently, there is no easy way to disable its insertion, 
-                    # so manually truncate it. 
-                    # Related discussion: https://github.com/huggingface/transformers/issues/26273
-                    if stop_token_ids[0] == 29871:
-                        stop_token_ids = stop_token_ids[1:]
-                    # TODO: Currently, staging engine only can handle single-token stop strings. 
-                    # Extend it to multi-tokens
-                    assert len(stop_token_ids) == 1
-                    list_stop_token_ids.append(stop_token_ids)
-                req.stopping_criteria.list_stop_token_ids = list_stop_token_ids
+            # wrap the stop sequence with list if necessary
+            if req.stopping_criteria.stop_sequences:
+                if isinstance(req.stopping_criteria.stop_sequences, str):
+                    req.stopping_criteria.stop_sequences = [req.stopping_criteria.stop_sequences]
+                assert isinstance(req.stopping_criteria.stop_sequences, list)
+
             # If the request violates the tokenization, this returns None, so skip.
             state = self._get_new_request_state(req)
             new_request_states.append(state)
@@ -186,12 +177,14 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                 delta = self._decode_last_output(state)
                 state.output_text += delta
 
-                
-                #state.output_text, delta, state.is_ended = check_stopping_sequences(state.stopping_criteria,
-                #                                                                state.output_text,
-                #                                                                delta,
-                #                                                                state.is_ended)
-                
+                state.output_text, delta, state.is_ended = check_stopping_sequences(state.stopping_criteria,
+                                                                                state.output_text,
+                                                                                delta,
+                                                                                state.is_ended)
+                # signal workers to stop generation                             
+                if state.is_ended:
+                    self.cancel(state.request_id)
+
                 outputs.append(
                     RequestOutput(
                         request_id,
