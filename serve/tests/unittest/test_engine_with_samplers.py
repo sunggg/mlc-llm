@@ -167,10 +167,12 @@ def test_stop(
             seq = res.sequences[0]
             req_id = int(res.request_id)
             if seq.is_finished:
+                # TODO: Currently staging engine returns FinishReason.Cancelled.
+                # This needs to be fixed. 
                 #assert seq.finish_reason == FinishReason.Stop, f"{seq.finish_reason.name}"
                 assert not seq.delta
                 gen_txt = generated[req_id]
-                print(f"request id {req_id} : {gen_txt!r}")
+                
                 # stop token should appear only once in the gen text.
                 found = sum([gen_txt.count(str_stop) for str_stop in requests[req_id].stopping_criteria.stop_sequences])
                 assert found == 1, f"{gen_txt!r}, matches: {found}"

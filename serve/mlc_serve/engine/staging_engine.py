@@ -78,7 +78,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
         self.worker_process.join()
 
     def add(self, requests: list[Request]):
-        logger.info("Staging engine - add")
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
 
@@ -113,7 +112,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             return len(self.requests) > 0
 
     def wait_for_request(self, timeout_seconds=None) -> bool:
-        logger.info("Wait for request")
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
 
@@ -127,7 +125,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             return False
 
     def step(self) -> InferenceStepResult:
-        logger.info("Step")
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
         if not self.has_pending_requests():
@@ -156,7 +153,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                     continue
 
                 state = self.requests[request_id]
-                #logger.info(f"state: {state}")
 
                 if seq_output.error is not None:
                     outputs.append(
