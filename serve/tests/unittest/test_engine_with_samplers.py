@@ -190,10 +190,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     model_artifact_path = os.path.join(args.artifact_path, args.local_id)
     
-    #test_max_tokens(model_artifact_path, use_staging_engine=True)
-    #test_max_tokens(model_artifact_path, use_staging_engine=False)
-    #test_ignore_eos(model_artifact_path, use_staging_engine=True)
-    #test_ignore_eos(model_artifact_path, use_staging_engine=False)
-
-    #test_stop(model_artifact_path, use_staging_engine=False)
+    test_max_tokens(model_artifact_path, use_staging_engine=True)
+    test_max_tokens(model_artifact_path, use_staging_engine=False)
+    test_ignore_eos(model_artifact_path, use_staging_engine=True)
+    test_ignore_eos(model_artifact_path, use_staging_engine=False)
+    test_stop(model_artifact_path, use_staging_engine=False)
     test_stop(model_artifact_path, use_staging_engine=True)
