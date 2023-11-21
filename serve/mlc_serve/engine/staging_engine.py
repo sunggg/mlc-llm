@@ -87,10 +87,12 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             if req.num_sequences > 1:
                 raise RuntimeError("num_sequences > 1 is not supported for now")
 
+            # wrap the stop sequence with list if necessary
             if req.stopping_criteria.stop_sequences:
                 if isinstance(req.stopping_criteria.stop_sequences, str):
                     req.stopping_criteria.stop_sequences = [req.stopping_criteria.stop_sequences]
                 assert isinstance(req.stopping_criteria.stop_sequences, list)
+
             # If the request violates the tokenization, this returns None, so skip.
             state = self._get_new_request_state(req)
             new_request_states.append(state)
@@ -110,7 +112,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             return len(self.requests) > 0
 
     def wait_for_request(self, timeout_seconds=None) -> bool:
-        logger.info("Wait for request")
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
 
@@ -176,7 +177,8 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                 state.output_text, delta, state.is_ended = check_stopping_sequences(state.stopping_criteria,
                                                                                 state.output_text,
                                                                                 delta,
-                # signal workers to stop generation                                                                                state.is_ended)
+                                                                                state.is_ended)
+                # signal workers to stop generation                             
                 if state.is_ended:
                     self.cancel(state.request_id)
 

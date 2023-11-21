@@ -139,17 +139,17 @@ def test_ignore_eos(
 
 
 def test_stop(
-    model_artifact_path, 
-    use_staging_engine, 
-    max_num_batched_tokens=2560, 
+    model_artifact_path,
+    use_staging_engine,
+    max_num_batched_tokens=2560,
     max_input_len=2560,
     num_requests=5,
 ):
     prompt = "Write a merge sort program in Python."
     engine = create_engine(
-        model_artifact_path, 
-        use_staging_engine, 
-        max_num_batched_tokens, 
+        model_artifact_path,
+        use_staging_engine,
+        max_num_batched_tokens,
         max_input_len,
     )
     ignore_eos = False

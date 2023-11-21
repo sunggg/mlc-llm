@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from threading import Condition, Lock, Thread
 from typing import Callable, Optional, Union, Any
 
-from .base import FinishReason, RequestId, RequestState, check_stopping_sequences
+from .base import FinishReason, RequestId, RequestState
 from .model_module import DecodeRequest, ModelModule, PrefillRequest, SequenceId
 
 
@@ -191,7 +191,7 @@ class GenerationLoopWorker:
                     new_tokens = new_tokens[:i+1]
                     state.is_ended = True
                     break
-            
+
             state.token_ids.extend(new_tokens)
             outputs.append(
                 SequenceGenerationOutput(id=res.sequence_id, new_tokens=new_tokens)
