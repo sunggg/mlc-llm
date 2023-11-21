@@ -56,8 +56,6 @@ class StoppingCriteria:
     """
     max_tokens: Optional[int]
     stop_sequences: Optional[list[str]] = None
-    list_stop_token_ids: Optional[list[list[str]]] = None
-        
 
 @dataclass
 class ChatMessage:
@@ -230,7 +228,6 @@ class RequestState:
     validation_err: Optional[ValidationError] = None
 
 def check_stopping_sequences(stopping_criteria, output_text, delta, is_ended):
-    print(f"{stopping_criteria!r}, {output_text!r} {delta!r}")
     if stopping_criteria.stop_sequences:
         for t in stopping_criteria.stop_sequences:
             if t in output_text:
