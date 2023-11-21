@@ -33,7 +33,6 @@ def test(args: argparse.Namespace):
 
     engine_config = get_engine_config({
         "use_staging_engine": args.use_staging_engine,
-        "max_num_batched_tokens": args.max_num_batched_tokens, 
         "max_input_len": args.max_input_len,    
         "min_decode_steps": args.min_decode_steps,
         "max_decode_steps": args.max_decode_steps,
@@ -120,7 +119,6 @@ if __name__ == "__main__":
     parser.add_argument("--local-id", type=str, required=True)
     parser.add_argument("--artifact-path", type=str, default="dist")
     parser.add_argument("--num-shards", type=int, default=1)
-    parser.add_argument("--max-num-batched-tokens", type=int, default=-1)
     parser.add_argument("--max-input-len", type=int, default=-1)
     parser.add_argument("--max-output-len", type=int, default=20)
     parser.add_argument("--prompt-allocate-ratio", type=float, default=2.0)
