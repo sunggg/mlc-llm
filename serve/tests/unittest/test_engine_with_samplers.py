@@ -20,16 +20,16 @@ from mlc_serve.engine.sync_engine import SynchronousInferenceEngine
 from mlc_serve.model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
 
 def create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_sequences,
+        model_artifact_path, 
+        use_staging_engine, 
+        max_num_batched_tokens, 
         max_input_len,
 
     ):
     engine_config = get_engine_config({
         "use_staging_engine": use_staging_engine,
-        "max_num_sequences": max_num_sequences,
-        "max_input_len": max_input_len,
+        "max_num_batched_tokens": max_num_batched_tokens, 
+        "max_input_len": max_input_len,    
         # Use defaults for "min_decode_steps", "max_decode_steps", "prompt_allocate_ratio"
     })
 
@@ -66,18 +66,18 @@ def create_request(idx, prompt, temp, max_tokens, stop, ignore_eos):
     )
 
 def test_max_tokens(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_sequences=4,
-        max_input_len=512,
+        model_artifact_path, 
+        use_staging_engine, 
+        max_num_batched_tokens=2560, 
+        max_input_len=2560,
         num_requests=5,
         ignore_eos=False
     ):
     prompt = "Write a merge sort program in Python."
     engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_sequences,
+        model_artifact_path, 
+        use_staging_engine, 
+        max_num_batched_tokens, 
         max_input_len,
     )
 
@@ -103,17 +103,17 @@ def test_max_tokens(
 
 
 def test_ignore_eos(
-    model_artifact_path,
-    use_staging_engine,
-    max_num_sequences=4,
-    max_input_len=512,
+    model_artifact_path, 
+    use_staging_engine, 
+    max_num_batched_tokens=2560, 
+    max_input_len=2560,
     num_requests=5,
 ):
     prompt = "hi"
     engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_sequences,
+        model_artifact_path, 
+        use_staging_engine, 
+        max_num_batched_tokens, 
         max_input_len,
     )
     s = 113
@@ -141,15 +141,15 @@ def test_ignore_eos(
 def test_stop(
     model_artifact_path,
     use_staging_engine,
-    max_num_sequences=4,
-    max_input_len=512,
+    max_num_batched_tokens=2560,
+    max_input_len=2560,
     num_requests=5,
 ):
     prompt = "Write a merge sort program in Python."
     engine = create_engine(
         model_artifact_path,
         use_staging_engine,
-        max_num_sequences,
+        max_num_batched_tokens,
         max_input_len,
     )
     ignore_eos = False
