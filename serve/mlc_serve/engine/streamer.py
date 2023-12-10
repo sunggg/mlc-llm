@@ -27,7 +27,7 @@ class TextStreamer:
             full_str = self.tokenizer.decode(all_tokens)
             prefix_len = len(prefix_str)
 
-            new_pending_tokens = deque([])
+            new_pending_tokens: Deque[int] = deque([])
             if full_str[:prefix_len] == prefix_str:
                 # Case 1. prefix_str is a prefix of `full_str`.
                 # We cannot naively do `validated_str = self.tokenizer.decode(validated_tokens)`
@@ -74,13 +74,13 @@ class TextStreamer:
             if len(self.pending_tokens) > 0:
                 # set the new prefix
                 self.prefix_tokens = list(self.pending_tokens)
-            self.pending_tokens = list(new_pending_tokens)
+            self.pending_tokens = new_pending_tokens
 
             ret += validated_str
         return ret
 
     def finish(self) -> str:
-        all_tokens = self.prefix_tokens + self.pending_tokens
+        all_tokens = self.prefix_tokens + list(self.pending_tokens)
         prefix_str = (
             self.tokenizer.decode(self.prefix_tokens)
             if len(self.prefix_tokens) > 0
