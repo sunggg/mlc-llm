@@ -6,10 +6,6 @@ import logging
 import multiprocessing
 import queue
 from threading import Lock
-from typing import Callable, Optional
-
-import os
-
 import structlog
 
 from .base import (
@@ -30,7 +26,7 @@ from .staging_engine_worker import (
     ShutdownCommand,
     run_generation_loop_worker,
 )
-
+from .streamer import TextStreamer
 from ..logging_utils import log_every
 
 LOG = structlog.stdlib.get_logger(__name__)
@@ -77,7 +73,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                 # Log state
                 structlog.contextvars.get_contextvars(),
                 json_log_output,
-                logging.getLevelName(logging.getLogger().level)
+                logging.getLevelName(logging.getLogger().level),
             ),
         )
 
@@ -154,9 +150,14 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             return False
 
     def step(self) -> InferenceStepResult:
-        log_every(self, 1000, LOG.debug, "StagingInferenceEngine.step",
+        log_every(
+            self,
+            1000,
+            LOG.debug,
+            "StagingInferenceEngine.step",
             _is_ready_to_serve=self._is_ready_to_serve(),
-            has_pending_requests=self.has_pending_requests())
+            has_pending_requests=self.has_pending_requests(),
+        )
 
         if not self._is_ready_to_serve():
             raise RuntimeError("GenerationLoopWorker process is not running")
@@ -177,7 +178,10 @@ class StagingInferenceEngine(ScopedInferenceEngine):
 
         outputs = list[RequestOutput]()
         with self.requests_lock:
-            LOG.debug("StagingInferenceEngine.step obtained requests_lock", generation_output=generation_output)
+            LOG.debug(
+                "StagingInferenceEngine.step obtained requests_lock",
+                generation_output=generation_output,
+            )
             for seq_output in generation_output.sequences:
                 # TODO: support multi-sequence per request
                 request_id = seq_output.id.request_id
@@ -205,12 +209,13 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                 state.token_ids.extend(seq_output.new_tokens)
 
                 # detokenize
-                delta = self._decode_last_output(state)
+                delta = state.text_streamer.put([state.token_ids[-1]])
                 state.output_text += delta
 
                 state.output_text, delta, state.is_ended = check_stopping_sequences(
                     state.stopping_criteria, state.output_text, delta, state.is_ended
                 )
+
                 # signal workers to stop generation
                 if state.is_ended:
                     self.stop_request(state.request_id)
@@ -262,21 +267,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
             debug_options=request.debug_options,
             output_text="",
             validation_err=validation_err,
+            text_streamer=TextStreamer(self.tokenizer),
             arrival_timestamp=time.time(),
         )
-
-    def _decode_last_output(self, state: RequestState) -> str:
-        if len(state.output_text):
-            prefix_idx = max(0, state.next_start_position - 6)
-        else:
-            prefix_idx = state.next_start_position
-
-        if prefix_idx == 0:
-            return self.tokenizer.decode(state.token_ids)
-
-        prefix = self.tokenizer.decode(
-            state.token_ids[prefix_idx : state.next_start_position]
-        )
-        full = self.tokenizer.decode(state.token_ids[prefix_idx:])
-
-        return full[len(prefix) :]

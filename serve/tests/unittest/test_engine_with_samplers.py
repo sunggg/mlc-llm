@@ -1,11 +1,5 @@
-import torch
-
 import argparse
-import json
-import random
 import os
-
-from mlc_llm import utils
 from mlc_serve.engine import (
     Request,
     ChatMessage,
