@@ -72,15 +72,12 @@ def decode_last_output(
     prompt_tokens: list[int],
     generation_sequence: GenerationSequence,
     tokenizer: Tokenizer,
-    skip_special_tokens=False,
+    skip_special_tokens=True,
 ) -> str:
     new_token_id = generation_sequence.generated_token_ids[-1]
 
-    LOG.info(f"out:{generation_sequence.output_text}")
     # This is the first iteration for this sequence
     if generation_sequence.prev_tokens is None:
-        assert len(generation_sequence.output_text) == 0
-        LOG.info("First iter")
         # TODO(masahi): Figure out a way to remove this concat
         all_input_ids = prompt_tokens + generation_sequence.generated_token_ids
         new_tokens = tokenizer._tokenizer.convert_ids_to_tokens(
@@ -92,9 +89,12 @@ def decode_last_output(
         # tokenizers (bigger = more conservative).
         # Subtract 1 extra to account for the generated token.
         prefix_offset = max(len(output_tokens) - 6, 0)
-        read_offset = max(len(output_tokens) - 1, 0)
+
+        if skip_special_tokens and new_token_id in tokenizer._tokenizer.all_special_ids:
+            read_offset = max(len(output_tokens), 0)
+        else:
+            read_offset = max(len(output_tokens) - 1, 0)
     else:
-        LOG.info("Second iter")
         # Put new_token_id in a list so skip_special_tokens is respected
         new_tokens = tokenizer._tokenizer.convert_ids_to_tokens(
             [new_token_id], skip_special_tokens=skip_special_tokens
@@ -112,25 +112,28 @@ def decode_last_output(
     new_text = tokenizer._tokenizer.convert_tokens_to_string(
         output_tokens[prefix_offset:]
     )
-    LOG.info(f"prefix_offset:{prefix_offset}, read_offset:{read_offset}")
-    LOG.info(
-        f"prefix ({len(prefix_text)}): {prefix_text}, new_text({len(new_text)}): {new_text}"
-    )
 
     if len(new_text) > len(prefix_text) and not new_text.endswith("�"):
         # utf-8 char at the end means it's a potential unfinished byte sequence
         # from byte fallback tokenization.
         # If it's in the middle, it's probably a real invalid id generated
         # by the model
-        generation_sequence.prev_tokens = new_tokens
-        generation_sequence.prefix_offset = read_offset
-        generation_sequence.read_offset = len(output_tokens)
-        return new_text[len(prefix_text) :]
+        new_prefix_offset = read_offset
+        new_read_offset = len(output_tokens)
+        delta = new_text[len(prefix_text) :]
     else:
+        new_prefix_offset = prefix_offset
+        new_read_offset = read_offset
+        delta = ""
+
+    generation_sequence.prefix_offset = new_prefix_offset
+    generation_sequence.read_offset = new_read_offset
+    if generation_sequence.prev_tokens is None:
         generation_sequence.prev_tokens = new_tokens
-        generation_sequence.prefix_offset = prefix_offset
-        generation_sequence.read_offset = read_offset
-        return ""
+    else:
+        generation_sequence.prev_tokens.extend(new_tokens)
+
+    return delta
 
 
 """
@@ -140,12 +143,21 @@ def decode_last_output(
     tokenizer: Tokenizer,
 ) -> str:
     if len(generation_sequence.output_text):
+        LOG.info(
+            f"T:{generation_sequence.output_text}({len({generation_sequence.output_text})})"
+        )
         prefix_idx = max(0, generation_sequence.next_start_position - 6)
     else:
+        LOG.info(
+            f"N: {generation_sequence.output_text}({len({generation_sequence.output_text})})"
+        )
         prefix_idx = generation_sequence.next_start_position
 
     # TODO(masahi): Figure out a way to remove this concat
     token_ids = prompt_tokens + generation_sequence.generated_token_ids
+    LOG.info(
+        f"{generation_sequence.next_start_position}, {len(token_ids)}, {prefix_idx}"
+    )
 
     if prefix_idx == 0:
         return tokenizer.decode(token_ids)
@@ -156,7 +168,6 @@ def decode_last_output(
     full = tokenizer.decode(token_ids[prefix_idx:])
 
     return full[len(prefix) :]
-
 """
 
 
