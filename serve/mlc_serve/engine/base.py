@@ -272,7 +272,7 @@ class GenerationSequence:
     next_start_position: int
     output_text: str
     prefix_begin_offset: int = 0
-    new_prefix_end_offset: int = 0
+    prefix_end_offset: int = 0
     prev_tokens: Optional[List[str]] = None
     is_finished: bool = False
 

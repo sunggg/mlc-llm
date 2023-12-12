@@ -20,7 +20,6 @@ from .base import (
 from .model_module import (
     DecodeRequest,
     PrefillRequest,
-    Tokenizer,
     ConversationTemplate,
     KVCacheManager,
     ModelModule,
@@ -33,7 +32,7 @@ LOG = structlog.stdlib.get_logger(__name__)
 
 
 def get_new_request_state(
-    request: Request, conversation_template: ConversationTemplate, tokenizer: Tokenizer
+    request: Request, conversation_template: ConversationTemplate, tokenizer: TokenizerP
 ) -> RequestState:
     if request.debug_options.prompt is not None:
         prompt = request.debug_options.prompt
@@ -72,7 +71,7 @@ def get_new_request_state(
 def detokenize_incrementally(
     prompt_tokens: list[int],
     generation_sequence: GenerationSequence,
-    tokenizer: Tokenizer,
+    tokenizer: TokenizerP,
     skip_special_tokens=False,
 ) -> str:
     new_token_id = generation_sequence.generated_token_ids[-1]
@@ -155,7 +154,7 @@ def update_sequence(
     gen_seq: GenerationSequence,
     new_token_ids: list[int],
     prompt_token_ids: list[int],
-    tokenizer: Tokenizer,
+    tokenizer: TokenizerP,
     stopping_criteria: StoppingCriteria,
 ) -> str:
     gen_seq.next_start_position = len(prompt_token_ids) + len(
