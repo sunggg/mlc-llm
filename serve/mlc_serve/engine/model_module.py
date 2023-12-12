@@ -134,7 +134,6 @@ class Tokenizer(Protocol):
     def encode(self, text: str) -> list[int]:
         pass
 
-    # TODO: Incremental decoding
     def decode(self, tokens: list[int]) -> str:
         pass
 
