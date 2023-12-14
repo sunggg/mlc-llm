@@ -114,7 +114,7 @@ def run_vllm(requests: List[Tuple[str, int, int]], model, num_shards) -> float:
     return end - start
 
 
-def run_mlc(engine, requests) -> float:
+def run_mlc(engine, requests, num_sequences_to_sample) -> float:
     for i, (prompt, _, output_len) in enumerate(requests):
         engine.add(
             [
@@ -127,7 +127,7 @@ def run_mlc(engine, requests) -> float:
                     stopping_criteria=StoppingCriteria(
                         max_tokens=output_len, stop_sequences=None
                     ),
-                    num_sequences=1,
+                    num_sequences=num_sequences_to_sample,
                     debug_options=DebugOptions(
                         ignore_eos=SAMPLER_SETTING["ignore_eos"], prompt=prompt
                     ),
@@ -191,7 +191,7 @@ def main(args: argparse.Namespace):
         requests = sample_requests(
             args.dataset, args.num_prompts, engine.tokenizer._tokenizer
         )
-        elapsed_time = run_mlc(engine, requests)
+        elapsed_time = run_mlc(engine, requests, args.num_sequences_to_sample)
     else:
         from transformers import AutoTokenizer
 
