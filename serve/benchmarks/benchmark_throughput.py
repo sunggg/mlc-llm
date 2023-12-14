@@ -18,6 +18,8 @@ from mlc_serve.engine.sync_engine import SynchronousInferenceEngine
 from mlc_serve.model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
 from mlc_serve.utils import get_default_mlc_serve_argparser, postproc_mlc_serve_args
 
+SAMPLER_SETTING = {"ignore_eos": True, "temperature": 1, "use_beam_search": False}
+
 
 def sample_requests(
     dataset_path: str,
@@ -62,46 +64,91 @@ def sample_requests(
     return sampled_requests
 
 
-def run_mlc(
-    requests: List[Tuple[str, int, int]],
-    engine,
-    num_sequences,
-) -> float:
-    for i, (prompt, _, output_len) in enumerate(requests):
+def run_mii(requests: List[Tuple[str, int, int]], model, num_shards) -> float:
+    from mii import pipeline
+
+    engine = pipeline(model, tensor_parallel=num_shards)
+    prompts = [prompt for prompt, _, _ in requests]
+    # FIXME: hardcoded
+    output_len = 128
+    start = time.perf_counter()
+    engine(prompts, max_new_tokens=output_len)
+    end = time.perf_counter()
+    return end - start
+
+
+def run_vllm(requests: List[Tuple[str, int, int]], model, num_shards) -> float:
+    from vllm import LLM, SamplingParams
+
+    # Fixme
+    llm = LLM(
+        model=model,
+        tokenizer=model,
+        quantization=None,
+        tensor_parallel_size=num_shards,
+        seed=0,
+        trust_remote_code=True,
+        dtype="auto",
+        max_model_len=2000,
+    )
+
+    # Add the requests to the engine.
+    for prompt, _, output_len in requests:
         sampling_params = SamplingParams(
-            temperature=1.0,
-            top_p=1.0,
-            frequency_penalty=-1,
-            logit_bias={1: -1, 3: 1, 2: 2},
+            n=1,
+            use_beam_search=SAMPLER_SETTING["use_beam_search"],
+            temperature=SAMPLER_SETTING["temperature"],
+            ignore_eos=SAMPLER_SETTING["ignore_eos"],
+            max_tokens=output_len,
+        )
+        # FIXME(woosuk): Do not use internal method.
+        llm._add_request(
+            prompt=prompt,
+            prompt_token_ids=None,
+            sampling_params=sampling_params,
         )
 
+    start = time.perf_counter()
+    llm._run_engine(use_tqdm=True)
+    end = time.perf_counter()
+    return end - start
+
+
+def run_mlc(engine, requests) -> float:
+    for i, (prompt, _, output_len) in enumerate(requests):
         engine.add(
             [
                 Request(
                     request_id=str(i),
                     messages=[ChatMessage(role="user", content=prompt)],
-                    sampling_params=sampling_params,
+                    sampling_params=SamplingParams(
+                        temperature=SAMPLER_SETTING["temperature"]
+                    ),
                     stopping_criteria=StoppingCriteria(
                         max_tokens=output_len, stop_sequences=None
                     ),
-                    debug_options=DebugOptions(ignore_eos=True, prompt=prompt),
-                    num_sequences=num_sequences,
+                    num_sequences=1,
+                    debug_options=DebugOptions(
+                        ignore_eos=SAMPLER_SETTING["ignore_eos"], prompt=prompt
+                    ),
                 )
             ]
         )
 
-    start = time.time()
+    start = time.perf_counter()
 
     while engine.has_pending_requests():
         engine.step()
 
-    end = time.time()
+    end = time.perf_counter()
+
+    if args.use_staging_engine:
+        engine.stop()
+
     return end - start
 
 
-def create_engine_and_tokenizer_module(
-    args: argparse.Namespace,
-):
+def create_mlc_engine(args: argparse.Namespace):
     engine_config = get_engine_config(
         {
             "use_staging_engine": args.use_staging_engine,
@@ -122,7 +169,6 @@ def create_engine_and_tokenizer_module(
             },
         )
         engine.start()
-        tokenizer = engine.tokenizer
     else:
         engine = SynchronousInferenceEngine(
             PagedCacheModelModule(
@@ -130,27 +176,34 @@ def create_engine_and_tokenizer_module(
                 engine_config=engine_config,
             )
         )
-        tokenizer = engine.tokenizer
 
-    return engine, tokenizer
+    return engine
 
 
 def main(args: argparse.Namespace):
     print(args)
+    random.seed(args.seed)
 
-    engine, tokenizer = create_engine_and_tokenizer_module(args)
+    if args.backend == "mlc-serve":
+        # Create mlc engine
+        engine = create_mlc_engine(args)
+        # Sample the requests.
+        requests = sample_requests(
+            args.dataset, args.num_prompts, engine.tokenizer._tokenizer
+        )
+        elapsed_time = run_mlc(engine, requests)
+    else:
+        from transformers import AutoTokenizer
 
-    # Sample the requests.
-    requests = sample_requests(args.dataset, args.num_prompts, tokenizer._tokenizer)
-
-    elapsed_time = run_mlc(
-        requests,
-        engine,
-        args.num_sequences_to_sample,
-    )
-
-    if args.use_staging_engine:
-        engine.stop()
+        model = "/opt/models/mistral/Mixtral-8x7B-Instruct-v0.1"
+        tokenizer = AutoTokenizer.from_pretrained(model)
+        requests = sample_requests(args.dataset, args.num_prompts, tokenizer)
+        if args.backend == "mii":
+            num_shards = 1
+            elapsed_time = run_mii(requests, model, num_shards)
+        elif args.backend == "vllm":
+            num_shards = 2
+            elapsed_time = run_vllm(requests, model, num_shards)
 
     total_num_tokens = sum(
         prompt_len + output_len * args.num_sequences_to_sample
@@ -160,7 +213,7 @@ def main(args: argparse.Namespace):
     tok_per_sec = total_num_tokens / elapsed_time
 
     print(
-        f"Throughput: {req_per_sec:.2f} requests/s, "
+        f"Engine Throughput: {req_per_sec:.2f} requests/s, "
         f"{total_num_tokens / elapsed_time:.2f} tokens/s"
     )
     if args.report_path is not None:
@@ -177,6 +230,9 @@ def main(args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = get_default_mlc_serve_argparser(description="Benchmark the throughput.")
+    parser.add_argument(
+        "--backend", type=str, default="mlc-serve", choices=["mlc-serve", "vllm", "mii"]
+    )
     parser.add_argument(
         "--dataset", type=str, required=True, help="Path to the dataset."
     )
