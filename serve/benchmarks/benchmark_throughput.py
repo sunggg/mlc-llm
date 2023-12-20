@@ -181,7 +181,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--local-id", type=str, required=True)
     parser.add_argument("--artifact-path", type=str, default="dist")
-    parser.add_argument("--use-staging-engine", action="store_true")
+    parser.add_argument("--use-sync-engine", action="store_true")
     parser.add_argument("--max-num-sequences", type=int, default=8)
     parser.add_argument("--num-sequences-to-sample", type=int, default=1)
     parser.add_argument("--max-input-len", type=int, default=512)
@@ -206,5 +206,6 @@ if __name__ == "__main__":
     args.model_artifact_path = Path(os.path.join(args.artifact_path, args.local_id))
     if not os.path.exists(args.model_artifact_path):
         raise Exception(f"Invalid local id: {args.local_id}")
-
+    
+    args.use_staging_engine = not args.use_sync_engine
     main(args)

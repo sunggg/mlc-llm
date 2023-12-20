@@ -139,7 +139,7 @@ if __name__ == "__main__":
     parser.add_argument("--long-prompt", action="store_true")
     parser.add_argument("--use-random-sampling", action="store_true")
     parser.add_argument("--num-sequences-to-sample", type=int, default=1)
-    parser.add_argument("--use-staging-engine", action="store_true")
+    parser.add_argument("--use-sync-engine", action="store_true")
     parser.add_argument("--min-decode-steps", type=int, default=12)
     parser.add_argument("--max-decode-steps", type=int, default=16)
     parser.add_argument("--seed", type=int, default=0)
@@ -157,6 +157,8 @@ if __name__ == "__main__":
     if args.num_sequences_to_sample > 1:
         args.use_random_sampling = True
 
+    args.use_staging_engine = not args.use_sync_engine
+    
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
 
