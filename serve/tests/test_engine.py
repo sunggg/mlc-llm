@@ -129,6 +129,7 @@ if __name__ == "__main__":
     parser = get_default_mlc_serve_argparser("test engine")
     parser.add_argument("--long-prompt", action="store_true")
     parser.add_argument("--use-random-sampling", action="store_true")
+    parser.add_argument("--max-output-len", type=int, default=20)
     args = parser.parse_args()
     args = postproc_mlc_serve_args(args)
 
