@@ -82,7 +82,6 @@ def sample(
         res[np.where(mask_greedy)] = res_greedy.cpu().numpy()
 
     if torch.any(mask_random):
-        print("RANDOM")
         temperatures = []
         top_ps = []
         top_ks = []
