@@ -79,6 +79,10 @@ def run_mii(requests: List[Tuple[str, int, int]], args) -> float:
     end = time.perf_counter()
     return end - start
 
+# TODO(sunggg)
+#top_p=1.0,
+#frequency_penalty=-1,
+#logit_bias={1: -1, 3: 1, 2: 2},
 
 def run_vllm(requests: List[Tuple[str, int, int]], args) -> float:
     from vllm import LLM, SamplingParams
