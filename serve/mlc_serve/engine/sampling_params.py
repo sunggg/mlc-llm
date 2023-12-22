@@ -3,7 +3,6 @@ Sampling parameters for text generation.
 
 based on https://github.com/vllm-project/vllm/blob/ac5cf86aa6aebbf9e42df51f7e377fbee85bc703/vllm/sampling_params.py
 """
-from collections import defaultdict
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import cached_property

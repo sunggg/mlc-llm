@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Union, Optional
+from typing import List, Union
 from pathlib import Path
 
 import structlog
@@ -13,10 +13,9 @@ from tvm.runtime import disco as di
 from .base import get_model_artifact_config
 from .paged_cache_manager import KVCache, CacheManager
 from .tokenizer import HfTokenizerModule, ConversationTemplate, Tokenizer
+from .sampler import sample
 from ..engine import (
-    SamplingType,
     MLCServeEngineConfig,
-    SamplingParams,
     SequenceId,
     PROMPT_SEQEUNCE_INDEX,
     get_prompt_sequence_id,
@@ -29,159 +28,6 @@ from ..engine.model_module import (
 from ..engine.model_module import ModelModule
 
 LOG = structlog.stdlib.get_logger(__name__)
-
-
-def _apply_top_p_top_k(logits, top_ps, top_ks):
-    p = torch.tensor(top_ps, dtype=logits.dtype, device=logits.device)
-    k = torch.tensor(top_ks, dtype=torch.int, device=logits.device)
-    logits_sort, logits_idx = logits.sort(dim=-1, descending=True)
-
-    # Apply top-p.
-    probs_sort = logits_sort.softmax(dim=-1)
-    probs_sum = probs_sort.cumsum(dim=-1)
-    top_p_mask = (probs_sum - probs_sort) > p.unsqueeze(dim=1)
-    logits_sort[top_p_mask] = -float("inf")
-
-    # Apply top-k.
-    # Create a mask for the top-k elements.
-    top_k_mask = torch.arange(logits_idx.shape[-1], device=logits_idx.device)
-    top_k_mask = top_k_mask.expand(logits_idx.shape[0], -1)
-    top_k_mask = top_k_mask >= k.unsqueeze(dim=1)
-    logits_sort[top_k_mask] = -float("inf")
-
-    # Re-sort the probabilities.
-    logits = torch.gather(logits_sort, dim=-1, index=torch.argsort(logits_idx, dim=-1))
-    return logits
-
-
-# torch.multinomial forces a GPU<->CPU sync.
-# Therefore, we use an optimized implementation instead.
-# Note that we always sample with replacement.
-# probs will be modified in place, but this is fine, as we pass
-# in a copy already.
-def _multinomial(
-    probs: torch.Tensor,
-    num_samples: int,
-):
-    if num_samples > 1:
-        # This is equivalent to torch.repeat_interleaved (which also
-        # forces a GPU<->CPU sync).
-        # This allows us to do sampling with replacement by creating
-        # num_samples copies of each row in the tensor, and then
-        # batch sampling the resulting tensor.
-        probs = (
-            probs[:, None, :]
-            .expand(probs.shape[0], num_samples, probs.shape[1])
-            .contiguous()
-            .view(-1, probs.shape[1])
-        )
-    q = torch.empty_like(probs).exponential_(1)
-    return probs.div_(q).argmax(dim=1).view(-1, num_samples)
-
-
-def sample(
-    sequence_ids,
-    logits: Union[tvm.nd.NDArray, torch.Tensor],
-    sampling_params: List[SamplingParams],
-    vocab_size: int,
-    check_safety=False,
-) -> Optional[np.ndarray]:
-    def _is_safe_to_sample(prob_like):
-        return (
-            torch.sum(torch.isnan(prob_like) | torch.isinf(prob_like) | (prob_like < 0))
-            == 0
-        )
-
-    logits = torch.from_dlpack(logits)
-    num_seq = len(sampling_params)
-
-    mask_random = torch.tensor(
-        [p.sampling_type == SamplingType.RANDOM for p in sampling_params],
-        dtype=torch.bool,
-    )
-    mask_greedy = torch.logical_not(mask_random)
-
-    temperatures = []
-    top_ps = []
-    top_ks = []
-    divide_by_temperature = False
-    do_top_p = False
-    do_top_k = False
-
-    for i in range(num_seq):
-        param = sampling_params[i]
-        freq = param.appeared_tokens_freq
-
-        if param.sampling_type == SamplingType.RANDOM:
-            temperatures.append(param.temperature)
-            top_ps.append(param.top_p)
-            top_ks.append(param.top_k if param.top_k != -1 else vocab_size)
-
-            divide_by_temperature |= temperatures[-1] != 1.0
-            do_top_p |= top_ps[-1] < 1.0
-            do_top_k |= top_ks[-1] != vocab_size
-
-            # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
-            # prohibit simultaneous using of them. At the latter case it can be LogitProcessor
-            if (
-                not param.presence_penalty == 0.0 or not param.frequency_penalty == 0
-            ) and (freq is not None):
-                index = torch.from_numpy(np.array(list(freq.keys()))).to(
-                    device=logits.device
-                )
-                src = (
-                    torch.from_numpy(np.array(list(freq.values())))
-                    .type_as(logits)
-                    .to(device=logits.device)
-                )
-                logits[i][index] -= (
-                    src * param.frequency_penalty + param.presence_penalty
-                )
-
-            if not param.repetition_penalty == 1.0 and (freq is not None):
-                index = torch.from_numpy(np.array(list(freq.keys()))).to(
-                    device=logits.device
-                )
-                logits[i][index] /= param.repetition_penalty
-
-            if param.logit_bias:
-                logits[i][param.logit_bias_index] += (
-                    torch.Tensor(param.logit_bias_value)
-                    .type_as(logits)
-                    .to(device=logits.device)
-                )
-
-    res_greedy, res_random = np.array([]), np.array([])
-    if torch.any(mask_greedy):
-        logits_greedy = logits[mask_greedy]
-        res_greedy = torch.argmax(logits_greedy, -1).cpu().numpy()
-
-    if torch.any(mask_random):
-        logits_random = logits[mask_random]
-
-        if divide_by_temperature:
-            t = torch.tensor(temperatures, dtype=logits.dtype, device=logits.device)
-            logits_random.div_(t.unsqueeze(dim=1))
-
-        if do_top_p or do_top_k:
-            logits = _apply_top_p_top_k(logits_random, top_ps, top_ks)
-
-        probs = torch.softmax(logits_random, dim=-1)
-
-        if check_safety and not _is_safe_to_sample(probs):
-            return None
-
-        res_random = _multinomial(probs, 1).cpu().numpy()[:, 0]
-
-    sequence_ids = np.array(sequence_ids)
-    sequence_ids_greedy = sequence_ids[mask_greedy.cpu().numpy()].tolist()
-    sequence_ids_random = sequence_ids[mask_random.cpu().numpy()].tolist()
-    new_sequence_ids = [
-        *sequence_ids_greedy,
-        *sequence_ids_random,
-    ]
-    next_tokens = [*res_greedy, *res_random]
-    return zip(new_sequence_ids, next_tokens)
 
 
 def load_disco_module(artifact_path, lib_path, num_shards):
