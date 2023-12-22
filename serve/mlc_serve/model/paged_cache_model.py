@@ -75,73 +75,81 @@ def sample(
     )
     mask_greedy = torch.logical_not(mask_random)
 
-    logits_greedy = logits[mask_greedy]
-
-    if logits_greedy.shape[0] > 0:
-        res_greedy = torch.argmax(logits_greedy, -1).cpu().numpy()
-
-        if logits_greedy.shape[0] == num_seq:
-            return res_greedy
-
-    temperatures = []
-    top_ps = []
-    top_ks = []
-    divide_by_temperature = False
-    do_top_p = False
-    do_top_k = False
-
-    for i in range(num_seq):
-        param = sampling_params[i]
-        freq = param.appeared_tokens_freq
-
-        if param.sampling_type == SamplingType.RANDOM:
-            temperatures.append(param.temperature)
-            top_ps.append(param.top_p)
-            top_ks.append(param.top_k if param.top_k != -1 else vocab_size)
-
-            divide_by_temperature |= temperatures[-1] != 1.0
-            do_top_p |= top_ps[-1] < 1.0
-            do_top_k |= top_ks[-1] != vocab_size
-
-            # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
-            # prohibit simultaneous using of them. At the latter case it can be LogitProcessor
-            if (not param.presence_penalty == 0.0 or not param.frequency_penalty == 0) and bool(freq):
-                index = torch.from_numpy(np.array(list(freq.keys()))).to(device=logits.device)
-                src = torch.from_numpy(np.array(list(freq.values()))).type_as(logits).to(device=logits.device)
-                logits[i][index] -= src * param.frequency_penalty + param.presence_penalty
-
-            if not param.repetition_penalty == 1.0 and bool(freq):
-                index = torch.from_numpy(np.array(list(freq.keys()))).to(device=logits.device)
-                logits[i][index] /= param.repetition_penalty
-
-            if param.logit_bias:
-                logits[i][param.logit_bias_index] += torch.Tensor(param.logit_bias_value).type_as(logits).to(device=logits.device)
-
-    logits_random = logits[mask_random]
-
-    if divide_by_temperature:
-        t = torch.tensor(temperatures, dtype=logits.dtype, device=logits.device)
-        logits_random.div_(t.unsqueeze(dim=1))
-
-    if do_top_p or do_top_k:
-        logits_random = _apply_top_p_top_k(logits_random, top_ps, top_ks)
-
-    probs = torch.softmax(logits_random, dim=-1)
-
-    if check_safety and not _is_safe_to_sample(probs):
-        return None
-
-    res_random = torch.multinomial(probs, 1, True).cpu().numpy()[:, 0]
-
-    if logits_random.shape[0] == num_seq:
-        return res_random
-
     res = np.empty((num_seq,), dtype=np.int32)
-    res[mask_random] = res_random
+    if torch.any(mask_greedy):
+        logits_greedy = logits[mask_greedy]
+        res_greedy = torch.argmax(logits_greedy, -1)
+        res[np.where(mask_greedy)] = res_greedy.cpu().numpy()
 
-    if logits_greedy.shape[0] > 0:
-        res[mask_greedy] = res_greedy
+    if torch.any(mask_random):
+        print("RANDOM")
+        temperatures = []
+        top_ps = []
+        top_ks = []
+        divide_by_temperature = False
+        do_top_p = False
+        do_top_k = False
 
+        for i in range(num_seq):
+            param = sampling_params[i]
+            freq = param.appeared_tokens_freq
+
+            if param.sampling_type == SamplingType.RANDOM:
+                temperatures.append(param.temperature)
+                top_ps.append(param.top_p)
+                top_ks.append(param.top_k if param.top_k != -1 else vocab_size)
+
+                divide_by_temperature |= temperatures[-1] != 1.0
+                do_top_p |= top_ps[-1] < 1.0
+                do_top_k |= top_ks[-1] != vocab_size
+
+                # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
+                # prohibit simultaneous using of them. At the latter case it can be LogitProcessor
+                if (
+                    not param.presence_penalty == 0.0
+                    or not param.frequency_penalty == 0
+                ) and bool(freq):
+                    index = torch.from_numpy(np.array(list(freq.keys()))).to(
+                        device=logits.device
+                    )
+                    src = (
+                        torch.from_numpy(np.array(list(freq.values())))
+                        .type_as(logits)
+                        .to(device=logits.device)
+                    )
+                    logits[i][index] -= (
+                        src * param.frequency_penalty + param.presence_penalty
+                    )
+
+                if not param.repetition_penalty == 1.0 and bool(freq):
+                    index = torch.from_numpy(np.array(list(freq.keys()))).to(
+                        device=logits.device
+                    )
+                    logits[i][index] /= param.repetition_penalty
+
+                if param.logit_bias:
+                    logits[i][param.logit_bias_index] += (
+                        torch.Tensor(param.logit_bias_value)
+                        .type_as(logits)
+                        .to(device=logits.device)
+                    )
+
+        logits_random = logits[mask_random]
+
+        if divide_by_temperature:
+            t = torch.tensor(temperatures, dtype=logits.dtype, device=logits.device)
+            logits_random.div_(t.unsqueeze(dim=1))
+
+        if do_top_p or do_top_k:
+            logits = _apply_top_p_top_k(logits_random, top_ps, top_ks)
+
+        probs = torch.softmax(logits_random, dim=-1)
+
+        if check_safety and not _is_safe_to_sample(probs):
+            return None
+
+        res_random = torch.multinomial(probs, 1, True)
+        res[np.where(mask_random)] = res_random.cpu().numpy()[:, 0]
     return res
 
 
@@ -184,7 +192,10 @@ def get_tvm_model(config, dev):
         vm = relax.VirtualMachine(ex, dev)
 
         from tvm.contrib import tvmjs  # pylint: disable=import-outside-toplevel
-        _params, _meta = tvmjs.load_ndarray_cache(f"{config.model_artifact_path}/params", dev)
+
+        _params, _meta = tvmjs.load_ndarray_cache(
+            f"{config.model_artifact_path}/params", dev
+        )
         params = []
         for i in range(_meta["ParamSize"]):
             params.append(_params[f"param_{i}"])
@@ -527,7 +538,10 @@ class Model:
 
                 if maybe_new_token is not None:
                     new_token = maybe_new_token[0]
-                    if not new_token in requests[i].sampling_params.appeared_tokens_freq:
+                    if (
+                        not new_token
+                        in requests[i].sampling_params.appeared_tokens_freq
+                    ):
                         requests[i].sampling_params.appeared_tokens_freq[new_token] = 0
                     requests[i].sampling_params.appeared_tokens_freq[new_token] += 1
                     if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
