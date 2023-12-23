@@ -396,7 +396,8 @@ class Model:
                     )
 
             return outputs
-        except RuntimeError:
+        except RuntimeError as e:
+            assert 0, f"TODO: {e}"
             # Fallback to per-token sampling in case some logits values are corrupted.
             outputs = []
             err_msg = (
