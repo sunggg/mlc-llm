@@ -54,12 +54,14 @@ class SamplingParams:
     top_p: float = 1.0
     top_k: int = -1
     logit_bias: Optional[Dict[int, float]] = None
-    appeared_tokens_freq: Dict[int, int] = None
+    # appeared_tokens_freq: Dict[int, int] = None
+    output_tokens: list[list[int]] = None
     logit_bias_index: list[int] = None
     logit_bias_value: list[float] = None
 
     def __post_init__(self):
-        self.appeared_tokens_freq = {}
+        # self.appeared_tokens_freq = {}
+        self.output_tokens = [[]]
         if self.logit_bias:
             self.logit_bias_index = list(self.logit_bias.keys())
             self.logit_bias_value = list(self.logit_bias.values())

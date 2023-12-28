@@ -13,7 +13,7 @@ from tvm.runtime import disco as di
 from .base import get_model_artifact_config
 from .paged_cache_manager import KVCache, CacheManager
 from .tokenizer import HfTokenizerModule, ConversationTemplate, Tokenizer
-from .sampler import sample
+from .sampler import sample, get_tensors_for_sampling
 from ..engine import (
     MLCServeEngineConfig,
     SequenceId,
@@ -177,6 +177,11 @@ class Model:
         self.sliding_window = config.sliding_window
         self.num_shards = config.num_shards
 
+        self._copy_stream: torch.cuda.Stream = torch.cuda.Stream()
+        self.torch_dev = torch.from_dlpack(
+            tvm.nd.array(np.array([], dtype="float32"), self.dev)
+        ).device
+
         if self.sliding_window:
             self.block_sliding_window = self.sliding_window // CacheManager.block_size
         else:
@@ -285,7 +290,6 @@ class Model:
         )
 
         input_shape = input_ids.shape
-
         if self.disco_session:
             input_ids = copy_to_worker_0(self.disco_session, input_ids)
             positions = copy_to_worker_0(self.disco_session, positions)
@@ -319,13 +323,6 @@ class Model:
                     slot_mapping,
                     self.params,
                 )
-
-            if self.disco_session:
-                logits, _ = out.debug_get_from_remote(0)
-            else:
-                logits = out[
-                    0
-                ]  # Ignore returned KV cache since it is updated in-place anyway.
         else:
             torch.cuda.nvtx.range_push(f"forward decode {input_shape}")
 
@@ -342,10 +339,21 @@ class Model:
                 self.params,
             )
 
-            if self.disco_session:
-                logits, _ = out.debug_get_from_remote(0)
-            else:
-                logits = out[0]
+        # Prepare sampling tensors in another stream to overlap
+        # CPU<->GPU data transfer with GPU computation in forward pass.
+        with torch.cuda.stream(self._copy_stream):
+            # TODO(@sunggg): fix the datatype
+            sampling_tensors = get_tensors_for_sampling(
+                sampling_params, torch.float32, self.torch_dev, self.vocab_size
+            )
+
+        # Last synchronization point for model execution
+        if self.disco_session:
+            logits, _ = out.debug_get_from_remote(0)
+        else:
+            logits = out[
+                0
+            ]  # Ignore returned KV cache since it is updated in-place anyway.
 
         torch.cuda.synchronize()
         torch.cuda.nvtx.range_pop()
@@ -366,17 +374,20 @@ class Model:
             self.copy_cache_blocks_func(cache.cache_blocks, block_mapping)
             cache.pending_copy_from_to = []
 
+        torch.cuda.current_stream().wait_stream(self._copy_stream)
         try:
             dict_next_tokens_seq = sample(
-                sequence_ids, logits, sampling_params, self.vocab_size
+                sequence_ids, logits, sampling_tensors, self.vocab_size
             )
 
             # assert next_tokens is not None
             outputs = []
             for i, (sequence_id, new_token) in enumerate(dict_next_tokens_seq):
-                if not new_token in requests[i].sampling_params.appeared_tokens_freq:
-                    requests[i].sampling_params.appeared_tokens_freq[new_token] = 0
-                requests[i].sampling_params.appeared_tokens_freq[new_token] += 1
+                # if not new_token in requests[i].sampling_params.appeared_tokens_freq:
+                #    requests[i].sampling_params.appeared_tokens_freq[new_token] = 0
+                # requests[i].sampling_params.appeared_tokens_freq[new_token] += 1
+                requests[i].sampling_params.output_tokens.append(new_token)
+
                 if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
                     for seq_id in range(num_sequences[i]):
                         outputs.append(
