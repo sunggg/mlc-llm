@@ -177,12 +177,15 @@ class Model:
         self.sliding_window = config.sliding_window
         self.num_shards = config.num_shards
 
+        if config.model_type == "llama":
+            self.torch_dtype = torch.float32
+        elif config.model_type == "mistral" or config.model_type == "mixtral":
+            self.torch_dtype = torch.float32
+        else:
+            assert 0, f"{config.model_type} is NOT supported yet"
+
         self._copy_stream: torch.cuda.Stream = torch.cuda.Stream()
-        self._greedy_sampling_stream: torch.cuda.Stream = torch.cuda.Stream()
-        self._random_sampling_stream: torch.cuda.Stream = torch.cuda.Stream()
-        self.torch_dev = torch.from_dlpack(
-            tvm.nd.array(np.array([], dtype="float32"), self.dev)
-        ).device
+        self.torch_dev = "cuda"
 
         if self.sliding_window:
             self.block_sliding_window = self.sliding_window // CacheManager.block_size
@@ -344,9 +347,8 @@ class Model:
         # Prepare sampling tensors in another stream to overlap
         # CPU<->GPU data transfer with GPU computation in forward pass.
         with torch.cuda.stream(self._copy_stream):
-            # TODO(@sunggg): fix the datatype
             sampling_tensors = get_tensors_for_sampling(
-                sampling_params, torch.float32, self.torch_dev, self.vocab_size
+                sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
             )
 
         # Last synchronization point for model execution
@@ -383,8 +385,6 @@ class Model:
                 logits,
                 sampling_tensors,
                 self.vocab_size,
-                self._greedy_sampling_stream,
-                self._random_sampling_stream,
             )
 
             # assert next_tokens is not None

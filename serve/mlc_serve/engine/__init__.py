@@ -17,4 +17,4 @@ from .base import (
     PROMPT_SEQEUNCE_INDEX,
     get_prompt_sequence_id,
 )
-from .sampling_params import SamplingParams, SamplingType
+from .sampling_params import SamplingParams, SamplingType, _SAMPLING_EPS as SAMPLING_EPS
