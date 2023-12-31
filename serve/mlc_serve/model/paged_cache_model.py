@@ -178,6 +178,8 @@ class Model:
         self.num_shards = config.num_shards
 
         self._copy_stream: torch.cuda.Stream = torch.cuda.Stream()
+        self._greedy_sampling_stream: torch.cuda.Stream = torch.cuda.Stream()
+        self._random_sampling_stream: torch.cuda.Stream = torch.cuda.Stream()
         self.torch_dev = torch.from_dlpack(
             tvm.nd.array(np.array([], dtype="float32"), self.dev)
         ).device
@@ -377,7 +379,12 @@ class Model:
         torch.cuda.current_stream().wait_stream(self._copy_stream)
         try:
             dict_next_tokens_seq = sample(
-                sequence_ids, logits, sampling_tensors, self.vocab_size
+                sequence_ids,
+                logits,
+                sampling_tensors,
+                self.vocab_size,
+                self._greedy_sampling_stream,
+                self._random_sampling_stream,
             )
 
             # assert next_tokens is not None

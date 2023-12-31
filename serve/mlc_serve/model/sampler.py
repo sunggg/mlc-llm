@@ -66,8 +66,6 @@ def get_tensors_for_sampling(sampling_params, dtype, dev, vocab_size):
     mask_random_t = torch.tensor(
         [p.sampling_type == SamplingType.RANDOM for p in sampling_params],
         dtype=torch.bool,
-        # device="cpu",
-        # pin_memory=True,
     )
     mask_greedy_t = torch.logical_not(
         mask_random_t,
@@ -85,7 +83,8 @@ def get_tensors_for_sampling(sampling_params, dtype, dev, vocab_size):
     frequency_penalties = []
     presence_penalties = []
     rep_penalties = []
-    logit_biases = []
+    logit_bias_indices = []
+    logit_bias_values = []
     past_output_tokens = []
     for param in sampling_params:
         # Prepare temperature
@@ -99,25 +98,14 @@ def get_tensors_for_sampling(sampling_params, dtype, dev, vocab_size):
         else:
             has_greedy |= True
 
-        # Prepare penalties = too expensive
-        # freq = param.appeared_tokens_freq
-        # freq_pres_penalties.append([0] * vocab_size)
-        # if freq is not None:
-        #    for tok_id, tok_freq in freq.items():
-        #        freq_pres_penalties[-1][tok_id] = (
-        #            param.frequency_penalty * tok_freq + param.presence_penalty
-        #        )
         frequency_penalties.append(param.frequency_penalty)
         presence_penalties.append(param.presence_penalty)
         assert param.repetition_penalty != 0
         rep_penalties.append(param.repetition_penalty)
 
         past_output_tokens.append(param.output_tokens)
-        # Prepare biases
-        # logit_biases.append([0] * vocab_size)
-        # if param.logit_bias:
-        #    for key, value in param.logit_bias.items():
-        #        logit_biases[-1][key] = value
+        logit_bias_indices.append(param.logit_bias_index)
+        logit_bias_values.append(param.logit_bias_value)
 
     temp_t = torch.tensor(
         temperatures,
@@ -157,40 +145,26 @@ def get_tensors_for_sampling(sampling_params, dtype, dev, vocab_size):
         device="cpu",
         pin_memory=True,
     )
-    logit_biases_t = torch.tensor(
-        logit_biases,
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
     past_output_tokens_t = torch.tensor(
         past_output_tokens,
         dtype=torch.long,
         device="cpu",
         pin_memory=True,
     )
-    """
-    bs = len(sampling_params)
-    freq_pres_penalties_t = torch.rand(
-        (bs, vocab_size),
+    apply_penalty = True
+    apply_bias = True
+    logit_bias_indices_t = torch.tensor(
+        logit_bias_indices,
+        dtype=torch.long,
+        device="cpu",
+        pin_memory=True,
+    )
+    logit_bias_values_t = torch.tensor(
+        logit_bias_values,
         dtype=dtype,
         device="cpu",
         pin_memory=True,
     )
-    rep_penalties_t = torch.rand(
-        (bs,),
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    ).unsqueeze_(dim=1)
-    logit_biases_t = torch.rand(
-        (bs, vocab_size),
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
-    """
-    apply_penalty = False
     return (
         has_random,
         has_greedy,
@@ -204,7 +178,9 @@ def get_tensors_for_sampling(sampling_params, dtype, dev, vocab_size):
         frequency_penalties_t.to(device=dev, non_blocking=True),
         presence_penalties_t.to(device=dev, non_blocking=True),
         repetition_penalties_t.to(device=dev, non_blocking=True),
-        logit_biases_t.to(device=dev, non_blocking=True),
+        apply_bias,
+        logit_bias_indices_t.to(device=dev, non_blocking=True),
+        logit_bias_values_t.to(device=dev, non_blocking=True),
         past_output_tokens_t.to(device=dev, non_blocking=True),
     )
 
@@ -214,6 +190,8 @@ def sample(
     logits: Union[tvm.nd.NDArray, torch.Tensor],
     sampling_tensors,
     vocab_size,
+    greedy_sampling_stream,
+    random_sampling_stream,
     check_safety=False,
 ) -> Optional[np.ndarray]:
     def _is_safe_to_sample(prob_like):
@@ -236,7 +214,9 @@ def sample(
         frequency_penalties_t,
         presence_penalties_t,
         repetition_penalties_t,
-        logit_biases_t,
+        apply_bias,
+        logit_bias_indices_t,
+        logit_bias_values_t,
         past_output_tokens_t,
     ) = sampling_tensors
 
@@ -244,7 +224,6 @@ def sample(
     assert frequency_penalties_t.is_cuda
     assert presence_penalties_t.is_cuda
     assert repetition_penalties_t.is_cuda
-    assert logit_biases_t.is_cuda
 
     # Adjust logits with in-place operations
     # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
@@ -267,30 +246,37 @@ def sample(
 
         logits -= frequency_penalties_t.unsqueeze_(dim=1) * bin_counts
         logits -= presence_penalties_t.unsqueeze_(dim=1) * mask
-        # logits += logit_biases_t
 
+    if apply_bias:
+        logits.scatter_add_(
+            1, logit_bias_indices_t, torch.ones_like(logit_bias_values_t)
+        )
     res_greedy, res_random = np.array([]), np.array([])
-    # opt1: we can run copy in different stream
-    # opt2: we an run logit greedy and random in parallel
-    if has_greedy:
-        logits_greedy = logits[mask_greedy_t]
-        res_greedy = torch.argmax(logits_greedy, -1)
-        res_greedy = res_greedy.cpu().numpy()
 
-    if has_random:
-        logits_random = logits[mask_random_t]
-        # Further adjust logits with the factors related to random sampling
-        logits_random.div_(temp_t[mask_random_t].unsqueeze(dim=1))
-        if apply_top_p_top_k:
-            logits = _apply_top_p_top_k(logits_random, top_ps_t, top_ks_t)
+    with torch.cuda.stream(greedy_sampling_stream):
+        if has_greedy:
+            logits_greedy = logits[mask_greedy_t]
+            res_greedy = torch.argmax(logits_greedy, -1)
+            res_greedy = res_greedy.to(torch.device("cpu"), non_blocking=True).numpy()
 
-        probs = torch.softmax(logits_random, dim=-1)
+    with torch.cuda.stream(random_sampling_stream):
+        if has_random:
+            logits_random = logits[mask_random_t]
+            # Further adjust logits with the factors related to random sampling
+            logits_random.div_(temp_t[mask_random_t].unsqueeze(dim=1))
+            if apply_top_p_top_k:
+                logits = _apply_top_p_top_k(logits_random, top_ps_t, top_ks_t)
 
-        if check_safety and not _is_safe_to_sample(probs):
-            return None
+            probs = torch.softmax(logits_random, dim=-1)
 
-        res_random = _multinomial(probs, 1)[:, 0]
-        res_random = res_random.cpu().numpy()
+            if check_safety and not _is_safe_to_sample(probs):
+                return None
+
+            res_random = _multinomial(probs, 1)[:, 0]
+            res_random = res_random.to(torch.device("cpu"), non_blocking=True).numpy()
+
+    torch.cuda.current_stream().wait_stream(greedy_sampling_stream)
+    torch.cuda.current_stream().wait_stream(random_sampling_stream)
 
     # Prepare output
     sequence_ids = np.array(sequence_ids)
