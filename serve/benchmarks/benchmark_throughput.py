@@ -18,7 +18,7 @@ from mlc_serve.engine.sync_engine import SynchronousInferenceEngine
 from mlc_serve.model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
 from mlc_serve.utils import get_default_mlc_serve_argparser, postproc_mlc_serve_args
 
-SAMPLER_SETTING = {"ignore_eos": True, "temperature": 1, "use_beam_search": False}
+SAMPLER_SETTING = {"ignore_eos": True, "temperature": 1}
 
 
 def sample_requests(
@@ -96,12 +96,11 @@ def run_vllm(requests: List[Tuple[str, int, int]], model, num_shards) -> float:
     for prompt, _, output_len in requests:
         sampling_params = SamplingParams(
             n=1,
-            use_beam_search=SAMPLER_SETTING["use_beam_search"],
+            use_beam_search=False,
             temperature=SAMPLER_SETTING["temperature"],
             ignore_eos=SAMPLER_SETTING["ignore_eos"],
             max_tokens=output_len,
         )
-        # FIXME(woosuk): Do not use internal method.
         llm._add_request(
             prompt=prompt,
             prompt_token_ids=None,
