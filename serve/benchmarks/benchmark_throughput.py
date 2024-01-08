@@ -233,7 +233,7 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    parser = get_default_mlc_serve_argparser(description="Benchmark the throughput.")
+    parser = get_default_mlc_serve_argparser(description="Benchmark the throughput.", allow_override=True)
     parser.add_argument(
         "--backend", type=str, default="mlc-serve", choices=["mlc-serve", "vllm", "mii"]
     )
@@ -259,6 +259,8 @@ if __name__ == "__main__":
         help="Append the current result to the given path if provided.",
     )
     # flags for vllm and deepspeed mii
+    # override local-id to make it non-required as it is only for mlc-serve
+    parser.add_argument("--local-id", type=str, required=False)
     parser.add_argument(
         "--model",
         type=str,
@@ -290,7 +292,8 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    args = postproc_mlc_serve_args(args)
+    if args.backend == "mlc-serve":
+        args = postproc_mlc_serve_args(args)
 
     assert args.greedy_sampling_ratio >= 0.0 and  args.greedy_sampling_ratio <= 1.0
     SAMPLER_SETTING["temperature"] = (0.0 if random.random() <= args.greedy_sampling_ratio else 1.0)
