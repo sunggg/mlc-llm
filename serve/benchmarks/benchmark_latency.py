@@ -10,22 +10,19 @@ from mlc_serve.engine import (
 from mlc_serve.utils import (
     get_default_mlc_serve_argparser,
     postproc_mlc_serve_args,
-    create_engine_and_tokenizer_module,
+    create_mlc_engine,
 )
-
-# /opt/bin/cuda-reserve.py --num-gpu 2 nsys profile --stats true -o mlc-serve-mixtral-sampling-before -w true -t cuda,nvtx,osrt,cudnn,cublas python3 serve/benchmarks/benchmark_throughput.py --local-id Mixtral-8x7B-Instruct-v0.1-q0f16-presharded-2gpu/  --max-num-sequences 1 --max-input-len 32000 --num-prompts 1 --dataset /opt/models/dataset/ShareGPT_V3_unfiltered_cleaned_split.json
-
 
 def main(args: argparse.Namespace):
     print(args)
 
-    engine = create_engine_and_tokenizer_module(args)[0]
+    engine = create_mlc_engine(args)
     engine.add(
         [
             Request(
                 request_id="0",
                 messages=None,
-                sampling_params=SamplingParams(temperature=0.0),
+                sampling_params=SamplingParams(temperature=args.temperature),
                 stopping_criteria=StoppingCriteria(
                     max_tokens=args.num_output_tokens, stop_sequences=None
                 ),
@@ -64,6 +61,9 @@ if __name__ == "__main__":
     parser = get_default_mlc_serve_argparser(description="Benchmark the throughput.")
     parser.add_argument("--num-input-tokens", type=int, default=128)
     parser.add_argument("--num-output-tokens", type=int, default=128)
+    parser.add_argument(
+        "--temperature", type=float, default=0.5, help="Temparature. By default, random sampling has used."
+    )
     args = parser.parse_args()
     args = postproc_mlc_serve_args(args)
 
