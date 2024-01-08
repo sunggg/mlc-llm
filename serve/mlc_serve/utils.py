@@ -56,11 +56,11 @@ def create_mlc_engine(args: argparse.Namespace):
             "max_decode_steps": args.max_decode_steps,
         }
     )
-
+    # type: off
     if args.use_staging_engine:
         engine = StagingInferenceEngine(
             tokenizer_module=HfTokenizerModule(args.model_artifact_path),
-            model_module_loader=PagedCacheModelModule,
+            model_module_loader=PagedCacheModelModule, 
             model_module_loader_kwargs={
                 "model_artifact_path": args.model_artifact_path,
                 "engine_config": engine_config,
@@ -68,12 +68,12 @@ def create_mlc_engine(args: argparse.Namespace):
         )
         engine.start()
     else:
-        engine = SynchronousInferenceEngine(
-            PagedCacheModelModule(
+        engine = SynchronousInferenceEngine( 
+            PagedCacheModelModule( 
                 model_artifact_path=args.model_artifact_path,
                 engine_config=engine_config,
             )
         )
-
+    # type: on
     return engine
 
