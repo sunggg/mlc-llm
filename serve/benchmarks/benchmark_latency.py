@@ -52,9 +52,8 @@ def main(args: argparse.Namespace):
     e2e = np.sum(latencies)
 
     print(
-        f"number of input tokens: {args.num_input_tokens}, number of output tokens: {args.num_output_tokens}"
-    )
-    print(
+        f"User side metrics\n"
+        f"* number of input tokens: {args.num_input_tokens}, number of output tokens: {args.num_output_tokens}"
         f"* Time To First Token (TTFT): {ttft*1000:.3f} ms\n"
         f"* Inter-Subsequent-Token-Latency (ISTL): {itl*1000:.3f} ms ({1/itl:.3f} tok/s)\n"
         f"* End-to-end latency: {e2e:.3f} s\n"
