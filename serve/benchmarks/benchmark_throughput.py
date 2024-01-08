@@ -18,7 +18,8 @@ from mlc_serve.engine.sync_engine import SynchronousInferenceEngine
 from mlc_serve.model.paged_cache_model import HfTokenizerModule, PagedCacheModelModule
 from mlc_serve.utils import get_default_mlc_serve_argparser, postproc_mlc_serve_args
 
-SAMPLER_SETTING = {"ignore_eos": True, "temperature": 1}
+# Temperature needs to be set based on the user arguments.
+SAMPLER_SETTING = {"ignore_eos": True, "temperature": -1}
 
 
 def sample_requests(
@@ -243,6 +244,9 @@ if __name__ == "__main__":
         "--num-prompts", type=int, default=1000, help="Number of prompts to process."
     )
     parser.add_argument(
+        "--greedy-sampling-ratio", type=float, default=0.5, help="Ratio of greedy sampling in the requests."
+    )
+    parser.add_argument(
         "--max-output-tokens",
         type=int,
         default=128,
@@ -287,5 +291,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args = postproc_mlc_serve_args(args)
+
+    assert args.greedy_sampling_ratio >= 0.0 and  args.greedy_sampling_ratio <= 1.0
+    SAMPLER_SETTING["temperature"] = (0.0 if random.random() <= args.greedy_sampling_ratio else 1.0)
 
     main(args)
