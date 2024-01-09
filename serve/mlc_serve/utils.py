@@ -57,7 +57,7 @@ def create_mlc_engine(args: argparse.Namespace):
         }
     )
     
-    # TODO(@team): There is a type mismatch in the definition. Fix this when have time. 
+    # TODO(@team): There is a type mismatch in the definition. Let's fix this when have time. 
     if args.use_staging_engine:
         engine = StagingInferenceEngine( # type: ignore
             tokenizer_module=HfTokenizerModule(args.model_artifact_path),
