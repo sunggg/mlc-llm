@@ -1,4 +1,4 @@
-"""Benchmark offline user metric."""
+"""Benchmark latency offline."""
 import argparse
 import time, numpy as np
 from mlc_serve.engine import (
