@@ -67,15 +67,17 @@ def run_mii(requests: List[Tuple[str, int, int]], args) -> float:
 
     engine = pipeline(args.model, tensor_parallel=args.num_shards)
     prompts = [prompt for prompt, _, _ in requests]
+    temp = 0.000001 if random.random() <= args.greedy_sampling_ratio else 0.7
     start = time.perf_counter()
     engine(
         prompts,
         max_new_tokens=args.num_output_tokens,
         ignore_eos=args.sampling_setting["ignore_eos"],
         # mii does not support temperature of zero.
-        temperature=(
-            0.000001 if random.random() <= args.greedy_sampling_ratio else 0.7
-        ),
+        temperature=temp,
+        top_p=1 if temp == 0.0 else args.sampling_setting["top_p"],
+        top_k=-1 if temp == 0.0 else args.sampling_setting["top_k"],
+        # mii currently does not support `logit_bias` and any of penalties
     )
     end = time.perf_counter()
     return end - start
@@ -105,7 +107,7 @@ def run_vllm(requests: List[Tuple[str, int, int]], args) -> float:
                 use_beam_search=False,
                 temperature=temp,
                 top_p=1 if temp == 0.0 else args.sampling_setting["top_p"],
-                top_k=-1 if temp == 0.0 else args.sampling_setting["top_p"],
+                top_k=-1 if temp == 0.0 else args.sampling_setting["top_k"],
                 repetition_penalty=args.sampling_setting["repetition_penalty"],
                 frequency_penalty=args.sampling_setting["frequency_penalty"],
                 presence_penalty=args.sampling_setting["presence_penalty"],
@@ -132,7 +134,7 @@ def run_mlc(engine, requests, args) -> float:
                     sampling_params=SamplingParams(
                         temperature=temp,
                         top_p=1 if temp == 0.0 else args.sampling_setting["top_p"],
-                        top_k=-1 if temp == 0.0 else args.sampling_setting["top_p"],
+                        top_k=-1 if temp == 0.0 else args.sampling_setting["top_k"],
                         repetition_penalty=args.sampling_setting["repetition_penalty"],
                         frequency_penalty=args.sampling_setting["frequency_penalty"],
                         presence_penalty=args.sampling_setting["presence_penalty"],

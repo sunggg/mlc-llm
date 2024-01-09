@@ -26,12 +26,14 @@ def main(args: argparse.Namespace):
                 messages=None,  # Provide prompt as `DebugOption` to bypass the conv template
                 sampling_params=SamplingParams(
                     temperature=args.temperature,
-                    top_p=1
-                    if args.temperature == 0.0
-                    else args.sampling_setting["top_p"],
-                    top_k=-1
-                    if args.temperature == 0.0
-                    else args.sampling_setting["top_p"],
+                    top_p=(
+                        1 if args.temperature == 0.0 else args.sampling_setting["top_p"]
+                    ),
+                    top_k=(
+                        -1
+                        if args.temperature == 0.0
+                        else args.sampling_setting["top_k"]
+                    ),
                     repetition_penalty=args.sampling_setting["repetition_penalty"],
                     frequency_penalty=args.sampling_setting["frequency_penalty"],
                     presence_penalty=args.sampling_setting["presence_penalty"],
@@ -58,6 +60,7 @@ def main(args: argparse.Namespace):
     if args.use_staging_engine:
         engine.stop()
 
+    assert len(latencies) == args.num_output_tokens
     ttft = latencies[0]  # time to first token
     itl = np.mean(latencies[1:])  # inter-token latency for subsequent tokens
     e2e = np.sum(latencies)
