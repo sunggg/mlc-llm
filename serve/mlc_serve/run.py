@@ -2,7 +2,6 @@ import argparse
 import tempfile
 import os
 import uvicorn
-from pathlib import Path
 
 from .api import create_app
 from .engine import AsyncEngineConnector, get_engine_config
@@ -13,20 +12,6 @@ from .utils import get_default_mlc_serve_argparser, postproc_mlc_serve_args
 
 
 def parse_args():
-    # Example
-    # python build.py --model vicuna-v1-7b --quantization q4f16_ft --use-cache=0 --max-seq-len 768 --batched
-    # python tests/python/test_batched.py --local-id vicuna-v1-7b-q4f16_ft
-    #
-    # For Disco:
-    # python build.py --model vicuna-v1-7b --quantization q0f16 --use-cache=0 --max-seq-len 768  --batched --build-model-only --num-shards 2
-    # python build.py --model vicuna-v1-7b --quantization q0f16 --use-cache=0 --max-seq-len 768  --batched --convert-weight-only
-    # /opt/bin/cuda-reserve.py  --num-gpus 2 python -m mlc_serve --local-id vicuna-v1-7b-q0f16 --num-shards 2
-    #
-    # Profile the gpu memory usage, and use the maximum number of cache blocks possible:
-    # /opt/bin/cuda-reserve.py  --num-gpus 2 python -m mlc_serve --local-id vicuna-v1-7b-q0f16 --num-shards 2 --max-num-batched-tokens 2560
-
-    # TODO(@sunggg): replace this with `utils.get_default_mlc_serve_argparser`
-    # Since this will require the change in ollm side as well, revisit this after octocalm.
     parser = get_default_mlc_serve_argparser(description="Launch mlc-serve")
     parser.add_argument("--host", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
