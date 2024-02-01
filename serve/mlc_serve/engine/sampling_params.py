@@ -3,7 +3,6 @@ Sampling parameters for text generation.
 
 based on https://github.com/vllm-project/vllm/blob/ac5cf86aa6aebbf9e42df51f7e377fbee85bc703/vllm/sampling_params.py
 """
-from collections import defaultdict
 from dataclasses import dataclass
 from enum import IntEnum
 from functools import cached_property
@@ -62,14 +61,15 @@ class SamplingParams:
     top_p: float = 1.0
     top_k: int = -1
     logit_bias: Optional[Dict[int, float]] = None
-    appeared_tokens_freq: Dict[int, int] = None
+    output_tokens: Optional[list[list[int]]] = None
     logit_bias_index: list[int] = None
     logit_bias_value: list[float] = None
     logprobs: bool = False
     top_logprobs: int = 0
 
     def __post_init__(self):
-        self.appeared_tokens_freq = {}
+        # TODO(@sunggg): Drop it if unnecessary
+        self.output_tokens = [[]]
         if self.logit_bias:
             self.logit_bias_index = list(self.logit_bias.keys())
             self.logit_bias_value = list(self.logit_bias.values())
@@ -105,7 +105,7 @@ class SamplingParams:
                         f"logit bias must be in [-100, 100], got {bias} for token {token}."
                     )
         if self.logprobs:
-            if (self.top_logprobs < 0 or self.top_logprobs > LOGPROB_TOP_K_MAX):
+            if self.top_logprobs < 0 or self.top_logprobs > LOGPROB_TOP_K_MAX:
                 raise ValueError(
                     f"top_logprobs must be between 0 and {LOGPROB_TOP_K_MAX}, got {self.top_logprobs}."
                 )

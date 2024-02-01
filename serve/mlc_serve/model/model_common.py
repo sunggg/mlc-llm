@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple, Union, Sequence
 import structlog
 import numpy as np
 import torch
-import tvm
 
 from .paged_cache_manager import CacheManager
 from ..engine import (
@@ -49,6 +48,8 @@ def get_num_cache_blocks(
         (total_vram * gpu_memory_utilization - used_memory_bytes) // cache_block_size
     )
 
+
+"""
 
 def get_logprob_infos(
     i: int,
@@ -137,31 +138,7 @@ def check_logprob_infos(
     if check:
         return logprob_infos
     return None
-
-
-def _apply_top_p_top_k(logits, top_ps, top_ks):
-    p = torch.tensor(top_ps, dtype=logits.dtype, device=logits.device)
-    k = torch.tensor(top_ks, dtype=torch.int, device=logits.device)
-    logits_sort, logits_idx = logits.sort(dim=-1, descending=True)
-
-    # Apply top-p.
-    probs_sort = logits_sort.softmax(dim=-1)
-    probs_sum = probs_sort.cumsum(dim=-1)
-    top_p_mask = (probs_sum - probs_sort) > p.unsqueeze(dim=1)
-    logits_sort[top_p_mask] = -float("inf")
-
-    # Apply top-k.
-    # Create a mask for the top-k elements.
-    top_k_mask = torch.arange(logits_idx.shape[-1], device=logits_idx.device)
-    top_k_mask = top_k_mask.expand(logits_idx.shape[0], -1)
-    top_k_mask = top_k_mask >= k.unsqueeze(dim=1)
-    logits_sort[top_k_mask] = -float("inf")
-
-    # Re-sort the probabilities.
-    logits = torch.gather(logits_sort, dim=-1, index=torch.argsort(logits_idx, dim=-1))
-    return logits
-
-
+    
 def sample(
     logits: Union[tvm.nd.NDArray, torch.Tensor],
     sampling_params: List[SamplingParams],
@@ -300,6 +277,7 @@ def sample(
 
     torch.cuda.nvtx.range_pop()
     return res, check_logprob_infos(logprob_infos)
+"""
 
 
 def sample_from_logits(
@@ -308,6 +286,8 @@ def sample_from_logits(
     requests: Sequence[Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]],
     vocab_size,
 ) -> List[TextGenerationResult]:
+    pass
+    """
     assert logits.shape[0] == len(requests)
 
     sampling_params = [req.sampling_params for req in requests]
@@ -408,6 +388,7 @@ def sample_from_logits(
                     )
 
         return outputs
+    """
 
 
 def prepare_inputs(

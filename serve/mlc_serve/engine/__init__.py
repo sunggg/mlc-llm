@@ -19,4 +19,9 @@ from .base import (
     RawLogprobsInfo,
     RawLogprobsInfos,
 )
-from .sampling_params import SamplingParams, SamplingType, LOGPROB_TOP_K_MAX
+from .sampling_params import (
+    SamplingParams,
+    SamplingType,
+    LOGPROB_TOP_K_MAX,
+    _SAMPLING_EPS as SAMPLING_EPS,
+)

@@ -15,9 +15,10 @@ from .model_common import (
     sample_from_logits,
     prepare_inputs,
     prepare_multi_query_decode_inputs,
+    # get_logprob_infos,
     get_num_cache_blocks,
 )
-
+from .sampler import sample, get_tensors_for_sampling
 from ..engine import (
     get_prompt_sequence_id,
     MLCServeEngineConfig,
@@ -138,6 +139,17 @@ class Model:
         self.vocab_size = config.vocab_size
         self.sliding_window = config.sliding_window
         self.num_shards = config.num_shards
+
+        # TODO(@sunggg): Find a better way
+        if config.model_type == "llama":
+            self.torch_dtype = torch.float32
+        elif config.model_type == "mistral" or config.model_type == "mixtral":
+            self.torch_dtype = torch.float32
+        else:
+            assert 0, f"{config.model_type} is NOT supported yet"
+
+        self._copy_stream: torch.cuda.Stream = torch.cuda.Stream()
+        self.torch_dev = "cuda"
 
         if self.sliding_window:
             self.block_sliding_window = self.sliding_window // CacheManager.block_size
@@ -276,9 +288,7 @@ class Model:
 
     def generate(
         self,
-        requests: Sequence[
-            Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]
-        ],
+        requests: Sequence[Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]],
         cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
         if len(requests) == 0:
@@ -323,7 +333,6 @@ class Model:
         )
 
         input_shape = input_ids.shape
-
         if self.disco_session:
             input_ids = copy_to_worker_0(self.disco_session, input_ids)
             positions = copy_to_worker_0(self.disco_session, positions)
@@ -373,6 +382,13 @@ class Model:
                 self.params,
             )
 
+        # Prepare sampling tensors in another stream to overlap
+        # CPU<->GPU data transfer with GPU computation in forward pass.
+        with torch.cuda.stream(self._copy_stream):
+            sampling_tensors = get_tensors_for_sampling(
+                sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
+            )
+
         if self.disco_session:
             logits, _ = out.debug_get_from_remote(0)
         else:
@@ -399,7 +415,121 @@ class Model:
             self.copy_cache_blocks_func(self.cache_blocks, block_mapping)
             cache.pending_copy_from_to = []
 
-        return sample_from_logits(logits, sequence_ids, requests, self.vocab_size)
+        # TODO: return sample_from_logits(logits, sequence_ids, requests, self.vocab_size)
+        torch.cuda.current_stream().wait_stream(self._copy_stream)
+        try:
+            dict_next_tokens_seq = sample(
+                sequence_ids,
+                logits,
+                sampling_tensors,
+                self.vocab_size,
+            )
+            """
+            next_tokens, logprob_infos = sample(
+                logits, sampling_params, self.vocab_size
+            )
+            assert next_tokens is not None
+            """
+            outputs = []
+            for i, (sequence_id, new_token) in enumerate(dict_next_tokens_seq):
+                # if not new_token in requests[i].sampling_params.appeared_tokens_freq:
+                #    requests[i].sampling_params.appeared_tokens_freq[new_token] = 0
+                # requests[i].sampling_params.appeared_tokens_freq[new_token] += 1
+                requests[i].sampling_params.output_tokens.append(new_token)
+
+                if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
+                    for seq_id in range(num_sequences[i]):
+                        outputs.append(
+                            TextGenerationResult(
+                                sequence_id=SequenceId(sequence_id.request_id, seq_id),
+                                generated_tokens=[new_token],
+                                error=None,
+                                logprob_info=None,  # get_logprob_infos(i, logprob_infos),
+                            )
+                        )
+                else:
+                    outputs.append(
+                        TextGenerationResult(
+                            sequence_id=sequence_id,
+                            generated_tokens=[new_token],
+                            error=None,
+                            logprob_info=None,  # get_logprob_infos(i, logprob_infos),
+                        )
+                    )
+
+            return outputs
+        except RuntimeError:
+            assert 0
+            # Fallback to per-token sampling in case some logits values are corrupted.
+            outputs = []
+            err_msg = (
+                "Error from sampling: probability tensor contains either `inf`, `nan`"
+                " or element < 0"
+            )
+
+            for i, (sequence_id, logits_per_token, sampling_param) in enumerate(
+                zip(sequence_ids, torch.from_dlpack(logits), sampling_params)
+            ):
+                maybe_new_token, logprob_infos = sample(
+                    torch.unsqueeze(logits_per_token, 0),
+                    [sampling_param],
+                    self.vocab_size,
+                    check_safety=True,
+                )
+
+                if maybe_new_token is not None:
+                    new_token = maybe_new_token[0]
+                    if (
+                        not new_token
+                        in requests[i].sampling_params.appeared_tokens_freq
+                    ):
+                        requests[i].sampling_params.appeared_tokens_freq[new_token] = 0
+                    requests[i].sampling_params.appeared_tokens_freq[new_token] += 1
+                    if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
+                        for seq_id in range(num_sequences[i]):
+                            outputs.append(
+                                TextGenerationResult(
+                                    sequence_id=SequenceId(
+                                        sequence_id.request_id, seq_id
+                                    ),
+                                    generated_tokens=[new_token],  # type: ignore
+                                    error=None,
+                                    # logprob_info=get_logprob_infos(0, logprob_infos),
+                                )
+                            )
+                    else:
+                        outputs.append(
+                            TextGenerationResult(
+                                sequence_id=sequence_id,
+                                generated_tokens=[new_token],  # type: ignore
+                                error=None,
+                                # logprob_info=get_logprob_infos(0, logprob_infos),
+                            )
+                        )
+                else:
+                    if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
+                        for seq_id in range(num_sequences[i]):
+                            outputs.append(
+                                TextGenerationResult(
+                                    sequence_id=SequenceId(
+                                        sequence_id.request_id, seq_id
+                                    ),
+                                    generated_tokens=[],
+                                    error=err_msg,
+                                    # logprob_info=get_logprob_infos(0, logprob_infos),
+                                )
+                            )
+                    else:
+                        outputs.append(
+                            TextGenerationResult(
+                                sequence_id=sequence_id,
+                                generated_tokens=[],
+                                error=err_msg,
+                                # logprob_info=get_logprob_infos(0, logprob_infos),
+                            )
+                        )
+
+            return outputs
 
 
 def init_tvm_model(
