@@ -275,8 +275,8 @@ def get_tensors_for_sampling(sampling_params, dtype, dev, vocab_size):
         pin_memory=True,
     )
 
-    # TODO(sunggg): Test if mask is faster on GPU
-    # .to(device=dev, non_blocking=True)
+    # NOTE: Keep `mask_random_t` and `mask_greedy_t` tensors in CPU.
+    #       Moving them to gpu showed a small performance regression.
     return (
         has_random,
         has_greedy,
@@ -310,7 +310,10 @@ def sample(
             == 0
         )
 
-    logits = torch.from_dlpack(logits)
+    # Convert to torch tensors if logits are in tvm ndarray
+    if isinstance(logits, tvm.nd.NDArray):
+        logits = torch.from_dlpack(logits)
+
     (
         has_random,
         has_greedy,
@@ -331,11 +334,19 @@ def sample(
     ) = sampling_tensors
 
     assert logits.is_cuda
+    assert not mask_random_t.is_cuda
+    assert not mask_greedy_t.is_cuda
+    assert top_ps_t.is_cuda
+    assert top_ks_t.is_cuda
+
     assert frequency_penalties_t.is_cuda
     assert presence_penalties_t.is_cuda
     assert repetition_penalties_t.is_cuda
 
-    # Adjust logits with in-place operations
+    assert logit_bias_indices_t.is_cuda
+    assert logit_bias_values_t.is_cuda
+    assert past_output_tokens_t.is_cuda
+
     # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
     # prohibit simultaneous using of them. At the latter case it can be LogitProcessor
     if apply_penalty:
@@ -353,7 +364,6 @@ def sample(
         )
         bin_counts = bin_counts[:, :vocab_size]
         mask = bin_counts > 0
-
         logits -= frequency_penalties_t.unsqueeze_(dim=1) * bin_counts
         logits -= presence_penalties_t.unsqueeze_(dim=1) * mask
 
@@ -361,12 +371,11 @@ def sample(
         logits.scatter_add_(
             1, logit_bias_indices_t, torch.ones_like(logit_bias_values_t)
         )
-    res_greedy, res_random = np.array([]), np.array([])
 
+    res_greedy, res_random = None, None
     if has_greedy:
         logits_greedy = logits[mask_greedy_t]
         res_greedy = torch.argmax(logits_greedy, -1)
-        res_greedy = res_greedy.cpu().numpy()
 
     if has_random:
         logits_random = logits[mask_random_t]
@@ -381,9 +390,12 @@ def sample(
             return None
 
         res_random = _multinomial(probs, 1)[:, 0]
-        res_random = res_random.cpu().numpy()
 
     # Prepare output
+    # Send results to CPU and convert them into numpy
+    res_greedy = res_greedy.cpu().numpy() if res_greedy is not None else np.array([])
+    res_random = res_random.cpu().numpy() if res_random is not None else np.array([])
+
     sequence_ids = np.array(sequence_ids)
     sequence_ids_greedy = sequence_ids[mask_greedy_t.cpu().numpy()].tolist()
     sequence_ids_random = sequence_ids[mask_random_t.cpu().numpy()].tolist()

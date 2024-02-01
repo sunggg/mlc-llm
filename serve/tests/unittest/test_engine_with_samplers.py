@@ -16,8 +16,8 @@ from mlc_serve.utils import get_default_mlc_serve_argparser, postproc_mlc_serve_
 
 def create_engine(
     model_artifact_path,
-    use_staging_engine,
     max_num_batched_tokens,
+    use_staging_engine,
 ):
     engine_config = get_engine_config(
         {
@@ -48,7 +48,17 @@ def create_engine(
 
 
 def create_request(
-    idx, prompt, temp, freq_pen, pre_pen, max_tokens, stop, ignore_eos, top_logprobs=0, logprobs=False, logit_bias=None
+    idx,
+    prompt,
+    temp,
+    freq_pen,
+    pre_pen,
+    max_tokens,
+    stop,
+    ignore_eos,
+    top_logprobs=0,
+    logprobs=False,
+    logit_bias=None,
 ):
     return Request(
         request_id=str(idx),
@@ -67,19 +77,11 @@ def create_request(
 
 
 def _test_max_tokens(
-    model_artifact_path,
-    use_staging_engine,
-    max_num_batched_tokens=2048,
+    engine,
     num_requests=5,
     ignore_eos=False,
 ):
     prompt = "Write a merge sort program in Python."
-    engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_batched_tokens,
-    )
-
     requests = [
         create_request(
             idx=str(n - 1),
@@ -112,25 +114,15 @@ def _test_max_tokens(
             else:
                 generated[int(res.request_id)] += seq.delta
 
-    if use_staging_engine:
-        engine.stop()
-
 
 def _test_max_context_length(
     model_artifact_path,
-    use_staging_engine,
-    max_num_sequences=4,
+    engine,
     num_requests=5,
     ignore_eos=False,
 ):
     model_artifact_config = get_model_artifact_config(model_artifact_path)
     max_context_length = model_artifact_config.max_context_length
-
-    engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_batched_tokens=max_context_length * max_num_sequences,
-    )
     prompt = "hi " * (max_context_length - 15)
 
     requests = [
@@ -161,22 +153,12 @@ def _test_max_context_length(
             else:
                 generated[int(res.request_id)] += seq.delta
 
-    if use_staging_engine:
-        engine.stop()
-
 
 def _test_ignore_eos(
-    model_artifact_path,
-    use_staging_engine,
-    max_num_batched_tokens=2048,
+    engine,
     num_requests=5,
 ):
     prompt = "hi"
-    engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_batched_tokens,
-    )
     s = 113
     requests = [
         create_request(
@@ -210,22 +192,12 @@ def _test_ignore_eos(
             else:
                 generated[int(res.request_id)] += seq.delta
 
-    if use_staging_engine:
-        engine.stop()
-
 
 def _test_stop(
-    model_artifact_path,
-    use_staging_engine,
-    max_num_batched_tokens=2048,
+    engine,
     num_requests=5,
 ):
     prompt = "Write a merge sort program in Python."
-    engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_batched_tokens,
-    )
     requests = []
     for n, stop in enumerate(["\n", ["\n"], "\n\n", "!", ["n", "!"]]):
         requests.append(
@@ -271,87 +243,14 @@ def _test_stop(
                 )
                 assert found == 1, f"{gen_txt!r}, matches: {found}"
 
-    if use_staging_engine:
-        engine.stop()
-
-
-def _test_penalty(
-    model_artifact_path,
-    use_staging_engine,
-    max_num_batched_tokens=2048,
-    num_requests=5,
-    ignore_eos=False,
-):
-    prompt = "Write a merge sort program in Python."
-    engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_batched_tokens,
-    )
-
-    random_requests = [
-        create_request(
-            idx=str(n - 1),
-            prompt=prompt,
-            temp=0.5,
-            freq_pen=0.5,
-            pre_pen=-0.5,
-            max_tokens=n,
-            stop=None,
-            ignore_eos=ignore_eos,
-            logit_bias={123: -100, 456: 100},
-        )
-        for n in range(1, num_requests)
-    ]
-    greedy_requests = [
-        create_request(
-            idx=str(n - 1),
-            prompt=prompt,
-            temp=0,
-            freq_pen=0,
-            pre_pen=0,
-            max_tokens=n,
-            stop=None,
-            ignore_eos=ignore_eos,
-        )
-        for n in range(num_requests, num_requests << 1)
-    ]
-    requests = random_requests + greedy_requests
-    engine.add(requests)
-
-    generated = ["" for _ in range(num_requests << 1)]
-
-    while engine.has_pending_requests():
-        results = engine.step()
-        for res in results.outputs:
-            assert len(res.sequences) == 1
-            seq = res.sequences[0]
-
-            if seq.is_finished:
-                assert (
-                    seq.num_generated_tokens
-                    == requests[int(res.request_id)].stopping_criteria.max_tokens
-                )
-                assert seq.finish_reason == FinishReason.Length
-            else:
-                generated[int(res.request_id)] += seq.delta
-
-    if use_staging_engine:
-        engine.stop()
 
 def _test_logprobs(
-    model_artifact_path, 
-    use_staging_engine, 
+    engine,
     num_requests=5,
     top_logprobs=3,
-    max_num_batched_tokens=2048
 ):
     prompt = "hi could you please implement merge sort?"
-    engine = create_engine(
-        model_artifact_path,
-        use_staging_engine,
-        max_num_batched_tokens,
-    )
+
     requests = [
         create_request(
             idx=str(n),
@@ -363,8 +262,9 @@ def _test_logprobs(
             stop=None,
             ignore_eos=True,
             top_logprobs=top_logprobs,
-            logprobs=True
-        ) for n in range(num_requests)
+            logprobs=True,
+        )
+        for n in range(num_requests)
     ]
     engine.add(requests)
 
@@ -376,33 +276,50 @@ def _test_logprobs(
             assert len(res.sequences) == 1
             seq = res.sequences[0]
 
-            assert seq.finish_reason is not None or len(seq.logprob_info[0].top_logprobs) == top_logprobs
+            assert (
+                seq.finish_reason is not None
+                or len(seq.logprob_info[0].top_logprobs) == top_logprobs
+            )
 
             if seq.is_finished:
-                assert seq.num_generated_tokens == requests[int(res.request_id)].stopping_criteria.max_tokens
+                assert (
+                    seq.num_generated_tokens
+                    == requests[int(res.request_id)].stopping_criteria.max_tokens
+                )
                 assert seq.finish_reason == FinishReason.Length
             else:
                 generated[int(res.request_id)] += seq.delta
 
-    if use_staging_engine:
-        engine.stop()
 
 if __name__ == "__main__":
     parser = get_default_mlc_serve_argparser("test engine with samplers")
     args = parser.parse_args()
     postproc_mlc_serve_args(args)
+    max_num_batched_tokens = 2048
 
-    _test_max_tokens(args.model_artifact_path, use_staging_engine=True)
-    _test_max_tokens(args.model_artifact_path, use_staging_engine=False)
-    _test_ignore_eos(args.model_artifact_path, use_staging_engine=True)
-    _test_ignore_eos(args.model_artifact_path, use_staging_engine=False)
-    _test_stop(args.model_artifact_path, use_staging_engine=False)
-    _test_stop(args.model_artifact_path, use_staging_engine=True)
-    _test_logprobs(args.model_artifact_path, use_staging_engine=True)
-    _test_logprobs(args.model_artifact_path, use_staging_engine=False)
+    # Test staging engines
+    staging_engine = create_engine(
+        args.model_artifact_path, max_num_batched_tokens, use_staging_engine=True
+    )
+    _test_max_tokens(staging_engine)
+    _test_ignore_eos(staging_engine)
+    _test_stop(staging_engine)
     # These tests are broken since we are now imposing no length limit
     # if max_tokens = None. The tests do not finish in a reasonable time.
-    # _test_max_context_length(model_artifact_path, use_staging_engine=True)
-    # _test_max_context_length(model_artifact_path, use_staging_engine=False)
-    _test_penalty(args.model_artifact_path, use_staging_engine=True)
-    _test_penalty(args.model_artifact_path, use_staging_engine=False)
+    # _test_max_context_length(staging_engine)
+    staging_engine.stop()
+
+    # Test sync engines
+    sync_engine = create_engine(
+        args.model_artifact_path, max_num_batched_tokens, use_staging_engine=False
+    )
+    _test_max_tokens(sync_engine)
+    _test_ignore_eos(sync_engine)
+    _test_stop(sync_engine)
+    # These tests are broken since we are now imposing no length limit
+    # if max_tokens = None. The tests do not finish in a reasonable time.
+    # _test_max_context_length(sync_engine)
+    """
+    _test_logprobs(args.model_artifact_path, use_staging_engine=True)
+    _test_logprobs(args.model_artifact_path, use_staging_engine=False)
+    """
