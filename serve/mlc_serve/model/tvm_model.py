@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Union, Tuple, Sequence
+from typing import List, Tuple
 
 import structlog
 import numpy as np
@@ -27,9 +27,10 @@ from ..engine import (
 )
 from ..engine.model_module import (
     DecodeRequest,
-    PrefillRequest,
     DraftTokens,
     EvalMultiQueryRequest,
+    PrefillRequest,
+    RequestsType,
     TextGenerationResult,
     TextGenerator,
 )
@@ -314,7 +315,7 @@ class Model:
 
     def generate(
         self,
-        requests: Sequence[Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]],
+        requests: RequestsType,
         cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
         if len(requests) == 0:
