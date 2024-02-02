@@ -18,7 +18,7 @@ from .model_common import (
     # get_logprob_infos,
     get_num_cache_blocks,
 )
-from .sampler import sample, SamplingMetadata
+from .sampler import sample, adjust_logits, SamplingMetadata
 from ..engine import (
     get_prompt_sequence_id,
     MLCServeEngineConfig,
@@ -444,12 +444,16 @@ class Model:
 
         # TODO: return sample_from_logits(logits, sequence_ids, requests, self.vocab_size)
         torch.cuda.current_stream().wait_stream(self._copy_stream)
+
+        # Convert to torch tensors if logits are in tvm ndarray
+        logits = torch.from_dlpack(logits)
+        logits = adjust_logits(logits, sampling_metadata, self.vocab_size)
+
         try:
             next_tokens_map = sample(
                 sequence_ids,
                 logits,
                 sampling_metadata,
-                self.vocab_size,
             )
             """
             next_tokens, logprob_infos = sample(

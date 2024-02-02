@@ -362,7 +362,8 @@ class SamplingMetadata:
         )
 
 
-def adjust_logits(logits, sampling_metadata, batch_size, vocab_size):
+def adjust_logits(logits, sampling_metadata, vocab_size):
+    batch_size = logits.shape[0]
     (
         apply_top_p_top_k,
         apply_penalty,
@@ -428,9 +429,8 @@ def adjust_logits(logits, sampling_metadata, batch_size, vocab_size):
 
 def sample(
     sequence_ids,
-    logits: Union[tvm.nd.NDArray, torch.Tensor],
+    logits: torch.Tensor,
     sampling_metadata,
-    vocab_size,
     check_safety=False,
 ) -> Optional[np.ndarray]:
     def _is_safe_to_sample(prob_like):
@@ -438,13 +438,6 @@ def sample(
             torch.sum(torch.isnan(prob_like) | torch.isinf(prob_like) | (prob_like < 0))
             == 0
         )
-
-    # Convert to torch tensors if logits are in tvm ndarray
-    if isinstance(logits, tvm.nd.NDArray):
-        logits = torch.from_dlpack(logits)
-
-    batch_size = len(sequence_ids)
-    logits = adjust_logits(logits, sampling_metadata, batch_size, vocab_size)
 
     res_greedy, res_random = None, None
     sampling_tensors = sampling_metadata.sampling_tensors
