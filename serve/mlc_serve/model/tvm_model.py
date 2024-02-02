@@ -22,6 +22,8 @@ from .sampler import sample, adjust_logits, SamplingMetadata
 from ..engine import (
     get_prompt_sequence_id,
     MLCServeEngineConfig,
+    PROMPT_SEQEUNCE_INDEX,
+    SequenceId,
 )
 from ..engine.model_module import (
     DecodeRequest,
@@ -329,6 +331,7 @@ class Model:
         sequence_ids = []
         prompt_lens = []
         request_maps = {}
+        sampling_params = []
 
         for request in requests:
             if isinstance(request, PrefillRequest):
@@ -341,6 +344,7 @@ class Model:
             request_maps[seq_id] = request
             assert not isinstance(request, EvalMultiQueryRequest)
             all_token_ids.append(request.token_ids)
+            sampling_params.append(request.sampling_params)
 
         (
             input_ids,

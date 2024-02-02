@@ -281,7 +281,7 @@ def sample(
 
 
 def sample_from_logits(
-    logits: Union[tvm.nd.NDArray, torch.Tensor],
+    logits,  #: Union[tvm.nd.NDArray, torch.Tensor],
     sequence_ids: List[SequenceId],
     requests: Sequence[Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]],
     vocab_size,
