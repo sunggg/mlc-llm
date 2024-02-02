@@ -76,6 +76,8 @@ class SamplingParams:
         self._verify_args()
         if self.temperature < _SAMPLING_EPS:
             # Zero temperature means greedy sampling.
+            self.top_p = 1.0
+            self.top_k = -1
             self._verify_greedy_sampling()
 
     def _verify_args(self) -> None:

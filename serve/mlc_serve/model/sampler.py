@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import structlog
+from dataclasses import dataclass
 from typing import List, Union, Optional, Tuple
 import tvm
 from ..engine import (
@@ -154,153 +155,281 @@ def check_logprob_infos(
 
 
 # TODO: Add logprob
-def get_tensors_for_sampling(sampling_params, dtype, dev, vocab_size):
-    mask_random_t = torch.tensor(
-        [p.sampling_type == SamplingType.RANDOM for p in sampling_params],
-        dtype=torch.bool,
-    )
-    mask_greedy_t = torch.logical_not(
-        mask_random_t,
-    )
-    assert not mask_random_t.is_cuda
-    assert not mask_greedy_t.is_cuda
+@dataclass
+class SamplingTensors:
+    mask_random: torch.Tensor
+    mask_greedy: torch.Tensor
+    temperatures: torch.Tensor
+    top_ps: torch.Tensor
+    top_ks: torch.Tensor
+    frequency_penalties: torch.Tensor
+    presence_penalties: torch.Tensor
+    repetition_penalties: torch.Tensor
+    logit_bias_indices: torch.Tensor
+    logit_bias_values: torch.Tensor
+    past_output_tokens: torch.Tensor
 
-    temperatures = []
-    top_ps = []
-    top_ks = []
-    do_top_p = False
-    do_top_k = False
-    has_random = False
-    has_greedy = False
-    apply_penalty = False
-    apply_bias = False
-    frequency_penalties = []
-    presence_penalties = []
-    rep_penalties = []
-    logit_bias_indices = []
-    logit_bias_values = []
-    past_output_tokens = []
-    for param in sampling_params:
-        # Prepare temperature
-        # NOTE: Zero temperature means deterministic sampling
-        # (i.e., greedy sampling or beam search).
-        # Set the temperature to 1 to avoid division by zero.
-        temperatures.append(
-            param.temperature if param.temperature >= SAMPLING_EPS else 1.0
+    @classmethod
+    def from_lists(
+        cls,
+        dtype,
+        dev,
+        list_mask_random: List[bool],
+        list_temperatures: List[float],
+        list_top_ps: List[float],
+        list_top_ks: List[int],
+        list_frequency_penalties: List[float],
+        list_presence_penalties: List[float],
+        list_repetition_penalties: List[float],
+        list_logit_bias_indices: List["long"],
+        list_logit_bias_values: List[float],
+        list_past_output_tokens: List["long"],
+    ):
+        # NOTE: Keep `mask_random_t` and `mask_greedy_t` tensors in CPU.
+        #       Moving them to gpu showed a small performance regression.
+        mask_random = torch.tensor(
+            list_mask_random,
+            dtype=torch.bool,
+            device="cpu",
+        )
+        mask_greedy = torch.logical_not(
+            mask_random,
+        )
+        temp = torch.tensor(
+            list_temperatures,
+            dtype=dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        top_ps = torch.tensor(
+            list_top_ps,
+            dtype=dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        top_ks = torch.tensor(
+            list_top_ks,
+            dtype=torch.int,
+            device="cpu",
+            pin_memory=True,
+        )
+        frequency_penalties = torch.tensor(
+            list_frequency_penalties,
+            dtype=dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        presence_penalties = torch.tensor(
+            list_presence_penalties,
+            dtype=dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        repetition_penalties = torch.tensor(
+            list_repetition_penalties,
+            dtype=dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        logit_bias_indices = torch.tensor(
+            list_logit_bias_indices,
+            dtype=torch.long,
+            device="cpu",
+            pin_memory=True,
+        )
+        logit_bias_values = torch.tensor(
+            list_logit_bias_values,
+            dtype=dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        past_output_tokens = torch.tensor(
+            list_past_output_tokens,
+            dtype=torch.long,
+            device="cpu",
+            pin_memory=True,
+        )
+        return cls(
+            mask_random,
+            mask_greedy,
+            temp.to(device=dev, non_blocking=True),
+            top_ps.to(device=dev, non_blocking=True),
+            top_ks.to(device=dev, non_blocking=True),
+            frequency_penalties.to(device=dev, non_blocking=True),
+            presence_penalties.to(device=dev, non_blocking=True),
+            repetition_penalties.to(device=dev, non_blocking=True),
+            logit_bias_indices.to(device=dev, non_blocking=True),
+            logit_bias_values.to(device=dev, non_blocking=True),
+            past_output_tokens.to(device=dev, non_blocking=True),
         )
 
-        if param.sampling_type == SamplingType.RANDOM:
-            has_random |= True
-            top_ps.append(param.top_p)
-            top_ks.append(param.top_k if param.top_k != -1 else vocab_size)
-            do_top_p |= top_ps[-1] < 1.0 - SAMPLING_EPS
-            do_top_k |= top_ks[-1] != vocab_size
-        else:
-            has_greedy |= True
 
-        past_output_tokens.append(param.output_tokens)
+@dataclass
+class SamplingMetadata:
+    has_random: bool
+    has_greedy: bool
+    apply_top_p_top_k: bool
+    apply_penalty: bool
+    apply_bias: bool
+    sampling_tensors: SamplingTensors
 
-        apply_penalty |= (
-            abs(param.presence_penalty) >= SAMPLING_EPS
-            or abs(param.frequency_penalty >= SAMPLING_EPS)
-            or abs(param.repetition_penalty - 1.0) >= SAMPLING_EPS
+    @classmethod
+    def from_sampling_params(
+        cls,
+        sampling_params: SamplingParams,
+        dtype: torch.dtype,
+        dev: str,
+        vocab_size: int,
+    ):
+        list_mask_random = []
+        list_temperatures = []
+        list_top_ps = []
+        list_top_ks = []
+        do_top_p = False
+        do_top_k = False
+        has_random = False
+        has_greedy = False
+        apply_penalty = False
+        apply_bias = False
+        list_frequency_penalties = []
+        list_presence_penalties = []
+        list_repetition_penalties = []
+        list_logit_bias_indices = []
+        list_logit_bias_values = []
+        list_past_output_tokens = []
+        for param in sampling_params:
+            # Prepare temperature
+            # NOTE: Zero temperature means deterministic sampling
+            # (i.e., greedy sampling or beam search).
+            # Set the temperature to 1 to avoid division by zero.
+            list_temperatures.append(
+                param.temperature if param.temperature >= SAMPLING_EPS else 1.0
+            )
+
+            if param.sampling_type == SamplingType.RANDOM:
+                list_mask_random.append(True)
+                has_random |= True
+                list_top_ps.append(param.top_p)
+                list_top_ks.append(param.top_k if param.top_k != -1 else vocab_size)
+                do_top_p |= list_top_ps[-1] < 1.0 - SAMPLING_EPS
+                do_top_k |= list_top_ks[-1] != vocab_size
+            else:
+                list_mask_random.append(False)
+                has_greedy |= True
+
+            list_past_output_tokens.append(param.output_tokens)
+
+            apply_penalty |= (
+                abs(param.presence_penalty) >= SAMPLING_EPS
+                or abs(param.frequency_penalty >= SAMPLING_EPS)
+                or abs(param.repetition_penalty - 1.0) >= SAMPLING_EPS
+            )
+            list_frequency_penalties.append(param.frequency_penalty)
+            list_presence_penalties.append(param.presence_penalty)
+            list_repetition_penalties.append(param.repetition_penalty)
+
+            if param.logit_bias_index:
+                assert param.logit_bias_value
+                apply_bias |= True
+                list_logit_bias_indices.append(param.logit_bias_index)
+                list_logit_bias_values.append(param.logit_bias_value)
+            else:
+                list_logit_bias_indices.append([])
+                list_logit_bias_values.append([])
+
+        apply_top_p_top_k = do_top_p | do_top_k
+        sampling_tensors = SamplingTensors.from_lists(
+            dtype,
+            dev,
+            list_mask_random,
+            list_temperatures,
+            list_top_ps,
+            list_top_ks,
+            list_frequency_penalties,
+            list_presence_penalties,
+            list_repetition_penalties,
+            list_logit_bias_indices,
+            list_logit_bias_values,
+            list_past_output_tokens,
         )
-        frequency_penalties.append(param.frequency_penalty)
-        presence_penalties.append(param.presence_penalty)
-        rep_penalties.append(param.repetition_penalty)
+        return cls(
+            has_random,
+            has_greedy,
+            apply_top_p_top_k,
+            apply_penalty,
+            apply_bias,
+            sampling_tensors,
+        )
 
-        if param.logit_bias_index:
-            assert param.logit_bias_value
-            apply_bias |= True
-            logit_bias_indices.append(param.logit_bias_index)
-            logit_bias_values.append(param.logit_bias_value)
-        else:
-            logit_bias_indices.append([])
-            logit_bias_values.append([])
 
-    temp_t = torch.tensor(
-        temperatures,
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
-    top_ps_t = torch.tensor(
-        top_ps,
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
-    top_ks_t = torch.tensor(
-        top_ks,
-        dtype=torch.int,
-        device="cpu",
-        pin_memory=True,
-    )
-    apply_top_p_top_k = do_top_p | do_top_k
-
-    frequency_penalties_t = torch.tensor(
-        frequency_penalties,
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
-    presence_penalties_t = torch.tensor(
-        frequency_penalties,
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
-    repetition_penalties_t = torch.tensor(
-        rep_penalties,
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
-    past_output_tokens_t = torch.tensor(
-        past_output_tokens,
-        dtype=torch.long,
-        device="cpu",
-        pin_memory=True,
-    )
-    logit_bias_indices_t = torch.tensor(
-        logit_bias_indices,
-        dtype=torch.long,
-        device="cpu",
-        pin_memory=True,
-    )
-    logit_bias_values_t = torch.tensor(
-        logit_bias_values,
-        dtype=dtype,
-        device="cpu",
-        pin_memory=True,
-    )
-
-    # NOTE: Keep `mask_random_t` and `mask_greedy_t` tensors in CPU.
-    #       Moving them to gpu showed a small performance regression.
-    return (
-        has_random,
-        has_greedy,
-        mask_random_t,
-        mask_greedy_t,
-        temp_t.to(device=dev, non_blocking=True),
+def adjust_logits(logits, sampling_metadata, batch_size, vocab_size):
+    (
         apply_top_p_top_k,
-        top_ps_t.to(device=dev, non_blocking=True),
-        top_ks_t.to(device=dev, non_blocking=True),
         apply_penalty,
-        frequency_penalties_t.to(device=dev, non_blocking=True),
-        presence_penalties_t.to(device=dev, non_blocking=True),
-        repetition_penalties_t.to(device=dev, non_blocking=True),
         apply_bias,
-        logit_bias_indices_t.to(device=dev, non_blocking=True),
-        logit_bias_values_t.to(device=dev, non_blocking=True),
-        past_output_tokens_t.to(device=dev, non_blocking=True),
+        sampling_tensors,
+    ) = (
+        sampling_metadata.apply_top_p_top_k,
+        sampling_metadata.apply_penalty,
+        sampling_metadata.apply_bias,
+        sampling_metadata.sampling_tensors,
     )
+    (
+        temp_t,
+        top_ps_t,
+        top_ks_t,
+        frequency_penalties_t,
+        repetition_penalties_t,
+        presence_penalties_t,
+        past_output_tokens_t,
+        logit_bias_indices_t,
+        logit_bias_values_t,
+    ) = (
+        sampling_tensors.temperatures,
+        sampling_tensors.top_ps,
+        sampling_tensors.top_ks,
+        sampling_tensors.frequency_penalties,
+        sampling_tensors.repetition_penalties,
+        sampling_tensors.presence_penalties,
+        sampling_tensors.past_output_tokens,
+        sampling_tensors.logit_bias_indices,
+        sampling_tensors.logit_bias_values,
+    )
+
+    # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
+    # prohibit simultaneous using of them. At the latter case it can be LogitProcessor
+    if apply_penalty:
+        repetition_penalties_t = repetition_penalties_t[:, None].repeat(1, vocab_size)
+        logits = torch.where(
+            logits > 0, logits / repetition_penalties_t, logits * repetition_penalties_t
+        )
+        bin_counts = torch.zeros(
+            (batch_size, vocab_size + 1), dtype=torch.long, device=logits.device
+        )
+        bin_counts.scatter_add_(
+            1, past_output_tokens_t, torch.ones_like(past_output_tokens_t)
+        )
+        bin_counts = bin_counts[:, :vocab_size]
+        mask = bin_counts > 0
+        logits -= frequency_penalties_t.unsqueeze_(dim=1) * bin_counts
+        logits -= presence_penalties_t.unsqueeze_(dim=1) * mask
+
+    # Adjust temperature
+    logits.div_(temp_t.unsqueeze(dim=1))
+    if apply_top_p_top_k:
+        logits = _apply_top_p_top_k(logits, top_ps_t, top_ks_t)
+
+    if apply_bias:
+        logits.scatter_add_(
+            1, logit_bias_indices_t, torch.ones_like(logit_bias_values_t)
+        )
+    return logits
 
 
 def sample(
     sequence_ids,
     logits: Union[tvm.nd.NDArray, torch.Tensor],
-    sampling_tensors,
+    sampling_metadata,
     vocab_size,
     check_safety=False,
 ) -> Optional[np.ndarray]:
@@ -314,78 +443,22 @@ def sample(
     if isinstance(logits, tvm.nd.NDArray):
         logits = torch.from_dlpack(logits)
 
-    (
-        has_random,
-        has_greedy,
-        mask_random_t,
-        mask_greedy_t,
-        temp_t,
-        apply_top_p_top_k,
-        top_ps_t,
-        top_ks_t,
-        apply_penalty,
-        frequency_penalties_t,
-        presence_penalties_t,
-        repetition_penalties_t,
-        apply_bias,
-        logit_bias_indices_t,
-        logit_bias_values_t,
-        past_output_tokens_t,
-    ) = sampling_tensors
-
-    assert logits.is_cuda
-    assert not mask_random_t.is_cuda
-    assert not mask_greedy_t.is_cuda
-    assert top_ps_t.is_cuda
-    assert top_ks_t.is_cuda
-
-    assert frequency_penalties_t.is_cuda
-    assert presence_penalties_t.is_cuda
-    assert repetition_penalties_t.is_cuda
-
-    assert logit_bias_indices_t.is_cuda
-    assert logit_bias_values_t.is_cuda
-    assert past_output_tokens_t.is_cuda
-
-    # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
-    # prohibit simultaneous using of them. At the latter case it can be LogitProcessor
-    if apply_penalty:
-        repetition_penalties_t = repetition_penalties_t[:, None].repeat(1, vocab_size)
-        logits = torch.where(
-            logits > 0, logits / repetition_penalties_t, logits * repetition_penalties_t
-        )
-        bs = len(sequence_ids)
-        bin_counts = torch.zeros(
-            (bs, vocab_size + 1), dtype=torch.long, device=logits.device
-        )
-
-        bin_counts.scatter_add_(
-            1, past_output_tokens_t, torch.ones_like(past_output_tokens_t)
-        )
-        bin_counts = bin_counts[:, :vocab_size]
-        mask = bin_counts > 0
-        logits -= frequency_penalties_t.unsqueeze_(dim=1) * bin_counts
-        logits -= presence_penalties_t.unsqueeze_(dim=1) * mask
-
-    if apply_bias:
-        logits.scatter_add_(
-            1, logit_bias_indices_t, torch.ones_like(logit_bias_values_t)
-        )
+    batch_size = len(sequence_ids)
+    logits = adjust_logits(logits, sampling_metadata, batch_size, vocab_size)
 
     res_greedy, res_random = None, None
-    if has_greedy:
+    sampling_tensors = sampling_metadata.sampling_tensors
+    mask_greedy_t, mask_random_t = (
+        sampling_tensors.mask_greedy,
+        sampling_tensors.mask_random,
+    )
+    if sampling_metadata.has_greedy:
         logits_greedy = logits[mask_greedy_t]
         res_greedy = torch.argmax(logits_greedy, -1)
 
-    if has_random:
+    if sampling_metadata.has_random:
         logits_random = logits[mask_random_t]
-        # Further adjust logits with the factors related to random sampling
-        logits_random.div_(temp_t[mask_random_t].unsqueeze(dim=1))
-        if apply_top_p_top_k:
-            logits = _apply_top_p_top_k(logits_random, top_ps_t, top_ks_t)
-
         probs = torch.softmax(logits_random, dim=-1)
-
         if check_safety and not _is_safe_to_sample(probs):
             return None
 

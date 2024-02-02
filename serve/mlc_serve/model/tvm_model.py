@@ -18,7 +18,7 @@ from .model_common import (
     # get_logprob_infos,
     get_num_cache_blocks,
 )
-from .sampler import sample, get_tensors_for_sampling
+from .sampler import sample, SamplingMetadata
 from ..engine import (
     get_prompt_sequence_id,
     MLCServeEngineConfig,
@@ -412,7 +412,7 @@ class Model:
         # Prepare sampling tensors in another stream to overlap
         # CPU<->GPU data transfer with GPU computation in forward pass.
         with torch.cuda.stream(self._copy_stream):
-            sampling_tensors = get_tensors_for_sampling(
+            sampling_metadata = SamplingMetadata.from_sampling_params(
                 sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
             )
 
@@ -448,7 +448,7 @@ class Model:
             next_tokens_map = sample(
                 sequence_ids,
                 logits,
-                sampling_tensors,
+                sampling_metadata,
                 self.vocab_size,
             )
             """
@@ -481,7 +481,7 @@ class Model:
                 # Assume this code path is taken rarely and the recomputation overhead is
                 # marginal.
                 with torch.cuda.stream(self._copy_stream):
-                    sampling_tensors = get_tensors_for_sampling(
+                    sampling_metadata = SamplingMetadata.from_sampling_params(
                         [sampling_param],
                         self.torch_dtype,
                         self.torch_dev,
@@ -493,7 +493,7 @@ class Model:
                 maybe_next_tokens_map = sample(
                     [sequence_id],
                     torch.unsqueeze(logits_per_token, 0),
-                    sampling_tensors,
+                    sampling_metadata,
                     self.vocab_size,
                     check_safety=True,
                 )
