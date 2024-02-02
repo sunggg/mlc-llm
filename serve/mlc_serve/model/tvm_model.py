@@ -222,13 +222,10 @@ class Model:
     ) -> List[TextGenerationResult]:
         sequence_ids = []
         last_query_offsets: List[int] = []
-        request_maps = {}
         sampling_params = []
         for request in requests:
             assert not isinstance(request.queries, DraftTokens)
             sequence_ids.append(request.sequence_id)
-            request_maps[request.sequence_id] = request
-
             if len(last_query_offsets) == 0:
                 last_query_offsets.append(request.queries.num_tokens - 1)
             else:
@@ -294,7 +291,7 @@ class Model:
         return sample_from_logits(
             last_query_logits,
             sequence_ids,
-            request_maps,
+            requests,
             sampling_metadata,
             self.vocab_size,
             self._copy_stream,
@@ -320,7 +317,6 @@ class Model:
         all_token_ids = []
         sequence_ids = []
         prompt_lens = []
-        request_maps = {}
         sampling_params = []
 
         for request in requests:
@@ -331,7 +327,6 @@ class Model:
                 prompt_lens.append(request.prompt_token_counts)
 
             sequence_ids.append(seq_id)
-            request_maps[seq_id] = request
             assert not isinstance(request, EvalMultiQueryRequest)
             all_token_ids.append(request.token_ids)
             sampling_params.append(request.sampling_params)
@@ -439,7 +434,7 @@ class Model:
         return sample_from_logits(
             logits,
             sequence_ids,
-            request_maps,
+            requests,
             sampling_metadata,
             self.vocab_size,
             self._copy_stream,

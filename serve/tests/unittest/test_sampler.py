@@ -1,6 +1,4 @@
 import torch
-import argparse
-from mlc_serve.utils import get_default_mlc_serve_argparser, postproc_mlc_serve_args
 from mlc_serve.model.sampler import SamplingMetadata, adjust_logits
 from mlc_serve.engine import SamplingParams
 
@@ -23,7 +21,6 @@ def _test_top_p_top_k():
     )
 
     _copy_stream: torch.cuda.Stream = torch.cuda.Stream()
-
     with torch.cuda.stream(_copy_stream):
         sampling_metadata = SamplingMetadata.from_sampling_params(
             [sampling_param],
@@ -31,8 +28,10 @@ def _test_top_p_top_k():
             dev,
             vocab_size,
         )
-        new_logits = adjust_logits(logits, sampling_metadata, batch_size, vocab_size)
-        print(new_logits)
+    torch.cuda.current_stream().wait_stream(_copy_stream)
+
+    new_logits = adjust_logits(logits, sampling_metadata, batch_size, vocab_size)
+    print(new_logits)
 
 
 if __name__ == "__main__":

@@ -304,6 +304,7 @@ if __name__ == "__main__":
     _test_max_tokens(staging_engine)
     _test_ignore_eos(staging_engine)
     _test_stop(staging_engine)
+    _test_logprobs(staging_engine)
     # These tests are broken since we are now imposing no length limit
     # if max_tokens = None. The tests do not finish in a reasonable time.
     # _test_max_context_length(staging_engine)
@@ -316,10 +317,7 @@ if __name__ == "__main__":
     _test_max_tokens(sync_engine)
     _test_ignore_eos(sync_engine)
     _test_stop(sync_engine)
+    _test_logprobs(sync_engine)
     # These tests are broken since we are now imposing no length limit
     # if max_tokens = None. The tests do not finish in a reasonable time.
     # _test_max_context_length(sync_engine)
-    """
-    _test_logprobs(args.model_artifact_path, use_staging_engine=True)
-    _test_logprobs(args.model_artifact_path, use_staging_engine=False)
-    """

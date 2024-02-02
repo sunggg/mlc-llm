@@ -22,6 +22,8 @@ class RawLogprobsInfo:
     top_token_ids: Optional[np.ndarray]
     top_logprobs: Optional[np.ndarray]
 
+
+# TODO(sunggg): can we delete this?
 RawLogprobsInfos = List[Optional[RawLogprobsInfo]]
 
 
