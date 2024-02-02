@@ -2,8 +2,7 @@ import torch
 import numpy as np
 import structlog
 from dataclasses import dataclass
-from typing import List, Union, Optional, Tuple
-import tvm
+from typing import List, Optional, Tuple
 from ..engine import (
     SamplingParams,
     SamplingType,
@@ -272,6 +271,7 @@ class SamplingMetadata:
     apply_penalty: bool
     apply_bias: bool
     sampling_tensors: SamplingTensors
+    sampling_params: List[SamplingParams]
 
     @classmethod
     def from_sampling_params(
@@ -359,6 +359,7 @@ class SamplingMetadata:
             apply_penalty,
             apply_bias,
             sampling_tensors,
+            sampling_params,
         )
 
 

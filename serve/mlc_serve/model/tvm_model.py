@@ -15,25 +15,21 @@ from .model_common import (
     sample_from_logits,
     prepare_inputs,
     prepare_multi_query_decode_inputs,
-    # get_logprob_infos,
     get_num_cache_blocks,
 )
-from .sampler import sample, adjust_logits, SamplingMetadata
 from ..engine import (
     get_prompt_sequence_id,
     MLCServeEngineConfig,
-    PROMPT_SEQEUNCE_INDEX,
-    SequenceId,
 )
 from ..engine.model_module import (
-    DecodeRequest,
     DraftTokens,
     EvalMultiQueryRequest,
     PrefillRequest,
-    RequestsType,
     TextGenerationResult,
     TextGenerator,
+    RequestType,
 )
+from .sampler import SamplingMetadata
 
 LOG = structlog.stdlib.get_logger(__name__)
 
@@ -131,30 +127,6 @@ def _prepare_inputs(
     )
 
 
-def prepare_output(sequence_id, num_seqs, new_tokens, error_msg=None):
-    outputs = []
-    if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
-        for seq_id in range(num_seqs):
-            outputs.append(
-                TextGenerationResult(
-                    sequence_id=SequenceId(sequence_id.request_id, seq_id),
-                    generated_tokens=new_tokens,
-                    error=error_msg,
-                    logprob_info=None,  # get_logprob_infos(i, logprob_infos),
-                )
-            )
-    else:
-        outputs.append(
-            TextGenerationResult(
-                sequence_id=sequence_id,
-                generated_tokens=new_tokens,
-                error=error_msg,
-                logprob_info=None,  # get_logprob_infos(i, logprob_infos),
-            )
-        )
-    return outputs
-
-
 class Model:
     def __init__(
         self,
@@ -250,9 +222,12 @@ class Model:
     ) -> List[TextGenerationResult]:
         sequence_ids = []
         last_query_offsets: List[int] = []
+        request_maps = {}
+        sampling_params = []
         for request in requests:
             assert not isinstance(request.queries, DraftTokens)
             sequence_ids.append(request.sequence_id)
+            request_maps[request.sequence_id] = request
 
             if len(last_query_offsets) == 0:
                 last_query_offsets.append(request.queries.num_tokens - 1)
@@ -260,6 +235,14 @@ class Model:
                 last_query_offsets.append(
                     last_query_offsets[-1] + request.queries.num_tokens
                 )
+            sampling_params.append(request.sampling_params)
+
+        # Prepare sampling tensors in another stream to overlap
+        # CPU<->GPU data transfer with GPU computation in forward pass.
+        with torch.cuda.stream(self._copy_stream):
+            sampling_metadata = SamplingMetadata.from_sampling_params(
+                sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
+            )
 
         (
             input_ids,
@@ -308,14 +291,20 @@ class Model:
         torch.cuda.nvtx.range_pop()
 
         last_query_logits = torch.from_dlpack(logits)[last_query_offsets]
-
         return sample_from_logits(
-            last_query_logits, sequence_ids, requests, self.vocab_size
+            last_query_logits,
+            sequence_ids,
+            request_maps,
+            sampling_metadata,
+            self.vocab_size,
+            self._copy_stream,
+            self.torch_dtype,
+            self.torch_dev,
         )
 
     def generate(
         self,
-        requests: RequestsType,
+        requests: List[RequestType],
         cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
         if len(requests) == 0:
@@ -346,6 +335,13 @@ class Model:
             assert not isinstance(request, EvalMultiQueryRequest)
             all_token_ids.append(request.token_ids)
             sampling_params.append(request.sampling_params)
+
+        # Prepare sampling tensors in another stream to overlap
+        # CPU<->GPU data transfer with GPU computation in forward pass.
+        with torch.cuda.stream(self._copy_stream):
+            sampling_metadata = SamplingMetadata.from_sampling_params(
+                sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
+            )
 
         (
             input_ids,
@@ -414,13 +410,6 @@ class Model:
                 self.params,
             )
 
-        # Prepare sampling tensors in another stream to overlap
-        # CPU<->GPU data transfer with GPU computation in forward pass.
-        with torch.cuda.stream(self._copy_stream):
-            sampling_metadata = SamplingMetadata.from_sampling_params(
-                sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
-            )
-
         if self.disco_session:
             logits, _ = out.debug_get_from_remote(0)
         else:
@@ -447,81 +436,16 @@ class Model:
             self.copy_cache_blocks_func(self.cache_blocks, block_mapping)
             cache.pending_copy_from_to = []
 
-        # TODO: return sample_from_logits(logits, sequence_ids, requests, self.vocab_size)
-        torch.cuda.current_stream().wait_stream(self._copy_stream)
-
-        # Convert to torch tensors if logits are in tvm ndarray
-        logits = torch.from_dlpack(logits)
-        logits = adjust_logits(logits, sampling_metadata, self.vocab_size)
-
-        try:
-            next_tokens_map = sample(
-                sequence_ids,
-                logits,
-                sampling_metadata,
-            )
-            """
-            next_tokens, logprob_infos = sample(
-                logits, sampling_params, self.vocab_size
-            )
-            assert next_tokens is not None
-            """
-            outputs = []
-            for sequence_id, new_token in next_tokens_map:
-                request = request_maps[sequence_id]
-                request.sampling_params.output_tokens.append(new_token)
-                num_seqs = (
-                    request.num_sequence if isinstance(request, PrefillRequest) else 1
-                )
-                outputs.extend(prepare_output(sequence_id, num_seqs, [new_token]))
-            return outputs
-        except RuntimeError:
-            # Fallback to per-token sampling in case some logits values are corrupted.
-            outputs = []
-            err_msg = (
-                "Error from sampling: probability tensor contains either `inf`, `nan`"
-                " or element < 0"
-            )
-
-            for sequence_id, logits_per_token, sampling_param in zip(
-                sequence_ids, torch.from_dlpack(logits), sampling_params
-            ):
-                # NOTE: Rerun the preparation for simplicity.
-                # Assume this code path is taken rarely and the recomputation overhead is
-                # marginal.
-                with torch.cuda.stream(self._copy_stream):
-                    sampling_metadata = SamplingMetadata.from_sampling_params(
-                        [sampling_param],
-                        self.torch_dtype,
-                        self.torch_dev,
-                        self.vocab_size,
-                    )
-                torch.cuda.current_stream().wait_stream(self._copy_stream)
-
-                # TODO:logprob
-                maybe_next_tokens_map = sample(
-                    [sequence_id],
-                    torch.unsqueeze(logits_per_token, 0),
-                    sampling_metadata,
-                    self.vocab_size,
-                    check_safety=True,
-                )
-                # Valid sample
-                if maybe_next_tokens_map is not None:
-                    sequence_id, new_token = maybe_next_tokens_map[0]
-                    request = request_maps[sequence_id]
-                    request.sampling_params.output_tokens.append(new_token)
-                    num_seqs = (
-                        request.num_sequence
-                        if isinstance(request, PrefillRequest)
-                        else 1
-                    )
-                    outputs.extend(prepare_output(sequence_id, num_seqs, [new_token]))
-                # Invalid sample
-                else:
-                    outputs.extend(prepare_output(sequence_id, num_seqs, [], err_msg))
-
-            return outputs
+        return sample_from_logits(
+            logits,
+            sequence_ids,
+            request_maps,
+            sampling_metadata,
+            self.vocab_size,
+            self._copy_stream,
+            self.torch_dtype,
+            self.torch_dev,
+        )
 
 
 def init_tvm_model(

@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple, Union
 import structlog
 import numpy as np
 import torch
+import tvm
 
 from .paged_cache_manager import CacheManager
 from ..engine import (
@@ -19,9 +20,9 @@ from ..engine.model_module import (
     PrefillRequest,
     EvalMultiQueryRequest,
     RequestType,
-    RequestsType,
     TextGenerationResult,
 )
+from .sampler import sample, adjust_logits, SamplingMetadata
 
 
 LOG = structlog.stdlib.get_logger(__name__)
@@ -280,72 +281,69 @@ def sample(
 """
 
 
-def update_tokens_frequency(
-    request: RequestType,
-    new_token: int
-):
-    if not new_token in request.sampling_params.appeared_tokens_freq:
-        request.sampling_params.appeared_tokens_freq[new_token] = 0
-    request.sampling_params.appeared_tokens_freq[new_token] += 1
-
-
-def append_text_gen_res(
-    outputs: List[TextGenerationResult],
+def prepare_textgen_result(
     request: RequestType,
     new_token: List[int],
     sequence_id: SequenceId,
     logprob_info: Optional[RawLogprobsInfos],
-    err_msg: Optional[str]=None,
+    err_msg: Optional[str] = None,
 ) -> List[TextGenerationResult]:
     if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
         assert isinstance(request, PrefillRequest)
         for seq_id in range(request.num_sequence):  # type: ignore
-            outputs.append(
-                TextGenerationResult(
-                    sequence_id=SequenceId(sequence_id.request_id, seq_id),
-                    generated_tokens=new_token,
-                    error=err_msg,
-                    logprob_info=logprob_info,
-                )
-            )
-    else:
-        outputs.append(
-            TextGenerationResult(
-                sequence_id=sequence_id,
+            return TextGenerationResult(
+                sequence_id=SequenceId(sequence_id.request_id, seq_id),
                 generated_tokens=new_token,
                 error=err_msg,
                 logprob_info=logprob_info,
             )
+    else:
+        return TextGenerationResult(
+            sequence_id=sequence_id,
+            generated_tokens=new_token,
+            error=err_msg,
+            logprob_info=logprob_info,
         )
-    return outputs
 
 
 def sample_from_logits(
-    logits,  #: Union[tvm.nd.NDArray, torch.Tensor],
+    logits: Union[tvm.nd.NDArray, torch.Tensor],
     sequence_ids: List[SequenceId],
-    requests: RequestsType,
-    vocab_size,
+    request_maps: dict[SequenceId, RequestType],
+    sampling_metadata: SamplingMetadata,
+    vocab_size: int,
+    copy_stream: torch.cuda.Stream,
+    torch_dtype: torch.dtype,
+    torch_dev: str,
 ) -> List[TextGenerationResult]:
-    pass
-    """
-    assert logits.shape[0] == len(requests)
+    assert logits.shape[0] == len(request_maps)
+    # Convert to torch tensors if logits are in tvm ndarray
+    if isinstance(logits, tvm.nd.NDArray):
+        logits = torch.from_dlpack(logits)
 
-    sampling_params = [req.sampling_params for req in requests]
-    outputs: List[TextGenerationResult] = []
+    # synchronization point for sampling tensors
+    # wait until all the tensors are loaded on GPU
+    torch.cuda.current_stream().wait_stream(copy_stream)
+    logits = adjust_logits(logits, sampling_metadata, vocab_size)
 
     try:
-        next_tokens, logprob_infos = sample(logits, sampling_params, vocab_size)
-        assert next_tokens is not None
-        for i, (sequence_id, new_token) in enumerate(zip(sequence_ids, next_tokens)):
-            update_tokens_frequency(requests[i], new_token)
-            outputs = append_text_gen_res(
-                outputs,
-                requests[i],
-                [new_token],
-                sequence_id,
-                get_logprob_infos(i, logprob_infos),
+        next_tokens_map = sample(
+            sequence_ids,
+            logits,
+            sampling_metadata,
+        )
+        outputs: List[TextGenerationResult] = []
+        for sequence_id, new_token in next_tokens_map:
+            request = request_maps[sequence_id]
+            request.sampling_params.output_tokens.append(new_token)
+            outputs.append(
+                prepare_textgen_result(
+                    request,
+                    [new_token],
+                    sequence_id,
+                    None,  # get_logprob_infos(i, logprob_infos),
+                )
             )
-
         return outputs
     except RuntimeError:
         # Fallback to per-token sampling in case some logits values are corrupted.
@@ -354,38 +352,53 @@ def sample_from_logits(
             " or element < 0"
         )
 
-        for i, (sequence_id, logits_per_token, sampling_param) in enumerate(
-            zip(sequence_ids, torch.from_dlpack(logits), sampling_params)
+        for sequence_id, logits_per_token, sampling_param in zip(
+            sequence_ids, torch.from_dlpack(logits), sampling_metadata.sampling_params
         ):
-            maybe_new_token, logprob_infos = sample(
+            # NOTE: Rerun the preparation for simplicity.
+            # Assume this code path is taken rarely and the recomputation overhead is
+            # marginal.
+            with torch.cuda.stream(copy_stream):
+                sampling_metadata = SamplingMetadata.from_sampling_params(
+                    [sampling_param],
+                    torch_dtype,
+                    torch_dev,
+                    vocab_size,
+                )
+            torch.cuda.current_stream().wait_stream(copy_stream)
+
+            # TODO:logprob
+            maybe_next_tokens_map = sample(
+                [sequence_id],
                 torch.unsqueeze(logits_per_token, 0),
-                [sampling_param],
+                sampling_metadata,
                 vocab_size,
                 check_safety=True,
             )
-
-            if maybe_new_token is not None:
-                new_token = maybe_new_token[0]
-                update_tokens_frequency(requests[i], new_token)
-                outputs = append_text_gen_res(
-                    outputs,
-                    requests[i],
-                    [new_token],
-                    sequence_id,
-                    get_logprob_infos(0, logprob_infos),
+            # Valid sample
+            request = request_maps[sequence_id]
+            if maybe_next_tokens_map is not None:
+                request.sampling_params.output_tokens.append(new_token)
+                outputs.append(
+                    prepare_textgen_result(
+                        request,
+                        [new_token],  # new_token
+                        sequence_id,
+                        None,  # get_logprob_infos(0, logprob_infos),
+                    )
                 )
             else:
-                outputs = append_text_gen_res(
-                    outputs,
-                    requests[i],
-                    [],  # new_token
-                    sequence_id,
-                    get_logprob_infos(0, logprob_infos),
-                    err_msg,
+                outputs.append(
+                    prepare_textgen_result(
+                        request,
+                        [],  # new_token
+                        sequence_id,
+                        None,  # get_logprob_infos(0, logprob_infos),
+                        err_msg,
+                    )
                 )
 
         return outputs
-    """
 
 
 def prepare_inputs(

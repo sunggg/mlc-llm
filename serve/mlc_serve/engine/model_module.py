@@ -67,7 +67,6 @@ class EvalMultiQueryRequest:
 
 
 RequestType = Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]
-RequestsType = Sequence[RequestType]
 
 
 @dataclass
