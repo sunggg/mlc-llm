@@ -80,6 +80,7 @@ def sample_from_logits(
     copy_stream: torch.cuda.Stream,
     torch_dtype: torch.dtype,
     torch_dev: str,
+    past_decode_tokens,
 ) -> List[TextGenerationResult]:
     batch_size = logits.shape[0]
     assert batch_size == len(requests)
@@ -114,54 +115,53 @@ def sample_from_logits(
             )
         return outputs
     except RuntimeError:
-        assert 0
         # Fallback to per-token sampling in case some logits values are corrupted.
         err_msg = (
             "Error from sampling: probability tensor contains either `inf`, `nan`"
             " or element < 0"
         )
-
-        for sequence_id, logits_per_token, sampling_param in zip(
-            sequence_ids, torch.from_dlpack(logits), sampling_metadata.sampling_params
-        ):
+        logits = torch.from_dlpack(logits)
+        for i in range(batch_size):
+            sequence_id = sequence_ids[i]
+            logits_per_token = logits[i]
+            sampling_param = sampling_metadata.sampling_params[i]
+            past_decode_tokens_per_request = past_decode_tokens[i]
+            logprob_info = sampling_output.logprob_infos[i]
             # NOTE: Rerun the preparation for simplicity.
             # Assume this code path is taken rarely and the recomputation overhead is
             # marginal.
             with torch.cuda.stream(copy_stream):
                 sampling_metadata = SamplingMetadata.from_sampling_params(
                     [sampling_param],
-                    list_past_output_tokens,
+                    past_decode_tokens_per_request,
                     torch_dtype,
                     torch_dev,
                     vocab_size,
                 )
             torch.cuda.current_stream().wait_stream(copy_stream)
-
-            # TODO:logprob
             maybe_next_tokens_map = sample(
                 torch.unsqueeze(logits_per_token, 0),
                 sampling_metadata,
                 check_safety=True,
             )
             # Valid sample
-            request = request_maps[sequence_id]
+            request = requests[i]
             if maybe_next_tokens_map is not None:
-                request.sampling_params.output_tokens.append(new_token)
                 outputs.append(
                     prepare_textgen_result(
                         request,
-                        [new_token],  # new_token
+                        [new_token],
                         sequence_id,
-                        None,  # get_logprob_infos(0, logprob_infos),
+                        [logprob_info] if logprob_info else None,
                     )
                 )
             else:
                 outputs.append(
                     prepare_textgen_result(
                         request,
-                        [],  # new_token
+                        [],
                         sequence_id,
-                        None,  # get_logprob_infos(0, logprob_infos),
+                        None,
                         err_msg,
                     )
                 )

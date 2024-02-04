@@ -223,6 +223,7 @@ class Model:
         sequence_ids = []
         last_query_offsets: List[int] = []
         sampling_params = []
+        past_decode_tokens = []
         for request in requests:
             assert not isinstance(request.queries, DraftTokens)
             sequence_ids.append(request.sequence_id)
@@ -233,13 +234,14 @@ class Model:
                     last_query_offsets[-1] + request.queries.num_tokens
                 )
             sampling_params.append(request.sampling_params)
+            past_decode_tokens.append([[], *request.token_ids])
 
         # Prepare sampling tensors in another stream to overlap
         # CPU<->GPU data transfer with GPU computation in forward pass.
         with torch.cuda.stream(self._copy_stream):
             sampling_metadata = SamplingMetadata.from_sampling_params(
                 sampling_params,
-                list_past_output_tokens,
+                past_decode_tokens,
                 self.torch_dtype,
                 self.torch_dev,
                 self.vocab_size,
@@ -323,6 +325,7 @@ class Model:
         prompt_lens = []
         sampling_params = []
         past_decode_tokens = []
+        # TODO: Better understand this `request_past_decode_tokens`
         for request in requests:
             if isinstance(request, PrefillRequest):
                 seq_id = get_prompt_sequence_id(request.request_id)
