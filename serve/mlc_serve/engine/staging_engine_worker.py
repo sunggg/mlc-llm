@@ -4,7 +4,7 @@ The worker for StagingInferenceEngine
 import time
 import multiprocessing
 import multiprocessing.synchronize
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import Thread, Lock
 from typing import Callable, Optional, Union, Any, Dict, List
 

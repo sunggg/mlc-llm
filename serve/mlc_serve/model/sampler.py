@@ -488,6 +488,7 @@ def sample(
     logprob_infos = [None] * batch_size
     if sampling_metadata.has_logprob:
         all_top_logprobs, all_top_tokens = [[]], [[]]
+        # TODO: Can we reuse softmax(random_logits)?
         logprobs = torch.log_softmax(logits, dim=-1)
         for lp_idx in range(LOGPROB_TOP_K_MAX):
             logprob_topk = lp_idx + 1
@@ -504,11 +505,8 @@ def sample(
             next_token = next_tokens[batch_idx]
             logprob_infos[batch_idx] = RawLogprobsInfo(
                 current_token_id=next_token,
-                current_logprob=logprobs[next_token],
-                top_token_ids=all_top_logprobs[logprob_topk][idx],
-                top_logprobs=all_top_tokens[logprob_topk][idx],
+                current_logprob=logprobs[batch_idx][next_token],
+                top_token_ids=all_top_tokens[logprob_topk][idx],
+                top_logprobs=all_top_logprobs[logprob_topk][idx],
             )
-
-    # TODO: Recover original order
-    # mixed: check_logprob_infos(logprob_infos)
     return SamplingOutput(next_tokens, logprob_infos)

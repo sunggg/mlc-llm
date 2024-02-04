@@ -11,8 +11,6 @@ import structlog
 
 from .base import (
     GenerationSequence,
-    RawLogprobsInfo,
-    RawLogprobsInfos,
     Request,
     RequestId,
     RequestState,
@@ -82,14 +80,20 @@ def detokenize_incrementally(
     prompt_tokens: list[int],
     generation_sequence: GenerationSequence,
     tokenizer: TokenizerP,
+    new_token_id=None,
     skip_special_tokens=False,
 ) -> str:
-    new_token_id = generation_sequence.generated_token_ids[-1]
+    # tokenizer.decode() is similar to doing convert_tokens_to_string(convert_ids_to_tokens(token_ids))
+    # in this function, we separate these two steps.
+    is_logprob = new_token_id is not None
+    new_token_id = (
+        generation_sequence.generated_token_ids[-1] if not is_logprob else new_token_id
+    )
 
     # This is the first iteration for this sequence
     if generation_sequence.prev_tokens is None:
         # TODO(masahi): Figure out a way to remove this concat
-        new_tokens = tokenizer.convert_ids_to_tokens(
+        new_tokens: Union[str, List[str]] = tokenizer.convert_ids_to_tokens(
             prompt_tokens + generation_sequence.generated_token_ids
         )
         output_tokens = new_tokens
@@ -105,7 +109,9 @@ def detokenize_incrementally(
             prefix_end_offset = max(len(output_tokens) - 1, 0)
     else:
         # Put new_token_id in a list so skip_special_tokens is respected
-        new_tokens = tokenizer.convert_ids_to_tokens([new_token_id])
+        new_tokens: Union[str, List[str]] = tokenizer.convert_ids_to_tokens(
+            [new_token_id]
+        )
         output_tokens = generation_sequence.prev_tokens + new_tokens
 
         prefix_begin_offset = generation_sequence.prefix_begin_offset
@@ -131,60 +137,17 @@ def detokenize_incrementally(
         new_prefix_end_offset = prefix_end_offset
         delta = ""
 
-    generation_sequence.prefix_begin_offset = new_prefix_begin_offset
-    generation_sequence.prefix_end_offset = new_prefix_end_offset
-    if generation_sequence.prev_tokens is None:
-        generation_sequence.prev_tokens = new_tokens
-    else:
-        generation_sequence.prev_tokens.extend(new_tokens)
+    # Update the status
+    # If this is for logprob, we do not update the status
+    if not is_logprob:
+        generation_sequence.prefix_begin_offset = new_prefix_begin_offset
+        generation_sequence.prefix_end_offset = new_prefix_end_offset
+        if generation_sequence.prev_tokens is None:
+            generation_sequence.prev_tokens = new_tokens
+        else:
+            generation_sequence.prev_tokens.extend(new_tokens)
 
     return delta
-
-
-def logprob_detokenize(
-    tokenizer: TokenizerP,
-    logprob_info: Optional[RawLogprobsInfo],
-) -> Optional[LogprobsContent]:
-    """Detokenize tokens from RawLogprobInfo and convert the latter to LogprobContent"""
-    if logprob_info is None:
-        return None
-
-    top_logprobs: List[TopLogprobs] = []
-    if logprob_info.top_token_ids is not None and logprob_info.top_logprobs is not None:
-        top_tokens = list(zip(logprob_info.top_token_ids, logprob_info.top_logprobs))
-        for top_token_id, top_logprob in top_tokens:
-            top_logprobs.append(
-                TopLogprobs(
-                    token=tokenizer.decode(top_token_id),
-                    logprob=float(top_logprob),
-                    # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
-                    bytes=None,
-                )
-            )
-
-    logprobs_content = LogprobsContent(
-        token=tokenizer.decode([logprob_info.current_token_id]),
-        logprob=logprob_info.current_logprob,
-        # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
-        bytes=None,
-        top_logprobs=top_logprobs,
-    )
-
-    return logprobs_content
-
-
-def logprobs_detokenize(
-    tokenizer: TokenizerP,
-    logprob_info: Optional[RawLogprobsInfos],
-) -> List[Optional[LogprobsContent]]:
-    if logprob_info is None:
-        return []
-
-    res: List[Optional[LogprobsContent]] = []
-    for info in logprob_info:
-        res.append(logprob_detokenize(tokenizer, info))
-
-    return res
 
 
 def check_stopping_sequences(stopping_criteria, output_text, delta, is_ended):
@@ -206,10 +169,11 @@ def check_stopping_sequences(stopping_criteria, output_text, delta, is_ended):
     return output_text, delta, is_ended
 
 
-def update_sequence(
+def prepare_output(
     gen_seq: GenerationSequence,
     new_token_ids: list[int],
     prompt_token_ids: list[int],
+    logprob_info,
     tokenizer: TokenizerP,
     stopping_criteria: StoppingCriteria,
 ) -> str:
@@ -220,11 +184,45 @@ def update_sequence(
     delta = detokenize_incrementally(prompt_token_ids, gen_seq, tokenizer)
     gen_seq.output_text += delta
 
+    out_logprob_info = []
+    if logprob_info is not None:
+        for info in logprob_info:
+            assert info is not None
+            assert info.top_token_ids is not None
+            assert info.top_logprobs is not None
+
+            top_logprobs: List[TopLogprobs] = []
+            token_ids = info.top_token_ids.cpu().numpy()
+            logprobs = info.top_logprobs.cpu().numpy()
+
+            for top_token_id, top_logprob in zip(token_ids, logprobs):
+                top_logprobs.append(
+                    TopLogprobs(
+                        token=detokenize_incrementally(
+                            prompt_token_ids, gen_seq, tokenizer, top_token_id
+                        ),
+                        logprob=float(top_logprob),
+                        # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
+                        bytes=None,
+                    )
+                )
+
+            logprobs_content = LogprobsContent(
+                token=delta,
+                logprob=info.current_logprob,
+                # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
+                bytes=None,
+                top_logprobs=top_logprobs,
+            )
+            out_logprob_info.append(logprobs_content)
+
+    # logprob_info = prepare_logprob_output(logprob_info, delta)
+
     gen_seq.output_text, delta, gen_seq.is_finished = check_stopping_sequences(
         stopping_criteria, gen_seq.output_text, delta, gen_seq.is_finished
     )
 
-    return delta
+    return delta, out_logprob_info
 
 
 def get_requests_to_process(

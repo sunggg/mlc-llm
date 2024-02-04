@@ -50,95 +50,6 @@ def get_num_cache_blocks(
     )
 
 
-def get_logprob_infos(
-    i: int,
-    logprob_infos: Optional[RawLogprobsInfos],
-) -> Optional[RawLogprobsInfos]:
-    if logprob_infos is None or logprob_infos[i] is None:
-        return None
-    return [logprob_infos[i]]
-
-
-def get_raw_logprob_info(
-    logits,
-    token_id,
-    top_logprobs_num,
-) -> RawLogprobsInfo:
-    logprobs = torch.log_softmax(logits, dim=-1)
-    res_logprob = logprobs[token_id]
-
-    if top_logprobs_num == 0:
-        top_logprobs = None
-        top_tokens = None
-    else:
-        assert top_logprobs_num <= LOGPROB_TOP_K_MAX, "Invalid input top_logprobs"
-        top_logprobs, top_tokens = torch.topk(
-            logprobs, k=top_logprobs_num, dim=-1, largest=True, sorted=True
-        )
-        top_tokens = top_tokens.cpu().numpy()
-        top_logprobs = top_logprobs.cpu().numpy()
-
-    # Set to raw logprob info
-    return RawLogprobsInfo(
-        current_token_id=token_id,
-        current_logprob=res_logprob,
-        top_token_ids=top_tokens,
-        top_logprobs=top_logprobs,
-    )
-
-
-def get_logprob_indices(
-    sampling_params: List[SamplingParams],
-    num_seq: int,
-) -> Tuple[List[Tuple[int, int, int]], List[Tuple[int, int, int]]]:
-    lgp_inds_greedy: List[Tuple[int, int, int]] = []
-    lgp_inds_random: List[Tuple[int, int, int]] = []
-
-    g_ind = 0
-    r_ind = 0
-    for i in range(num_seq):
-        sampling_param = sampling_params[i]
-        if sampling_param.sampling_type == SamplingType.RANDOM:
-            if sampling_param.logprobs:
-                lgp_inds_random.append((i, r_ind, sampling_param.top_logprobs))
-            r_ind = r_ind + 1
-        else:
-            if sampling_param.logprobs:
-                lgp_inds_greedy.append((i, g_ind, sampling_param.top_logprobs))
-            g_ind = g_ind + 1
-
-    return lgp_inds_greedy, lgp_inds_random
-
-
-def get_raw_logprob_infos(
-    logprob_infos: RawLogprobsInfos,
-    indices: List[Tuple[int, int, int]],
-    logits: torch.Tensor,
-    token_ids: torch.Tensor,
-) -> RawLogprobsInfos:
-    for i, ind, top_logprobs in indices:
-        logprob_infos[i] = get_raw_logprob_info(
-            logits[ind],
-            token_ids[ind],
-            top_logprobs,
-        )
-
-    return logprob_infos
-
-
-def check_logprob_infos(
-    logprob_infos: RawLogprobsInfos,
-) -> Optional[RawLogprobsInfos]:
-    check = False
-    for info in logprob_infos:
-        if info is not None:
-            check = True
-            break
-    if check:
-        return logprob_infos
-    return None
-
-
 def prepare_textgen_result(
     request: RequestType,
     new_token: List[int],
@@ -192,7 +103,9 @@ def sample_from_logits(
         )
 
         outputs: List[TextGenerationResult] = []
-        for i, new_token in enumerate(sampling_output.next_tokens):
+        for i, (new_token, logprob_info) in enumerate(
+            zip(sampling_output.next_tokens, sampling_output.logprob_infos)
+        ):
             sequence_id = sequence_ids[i]
             request = requests[i]
             request.sampling_params.output_tokens.append(new_token)
@@ -201,11 +114,12 @@ def sample_from_logits(
                     request,
                     [new_token],
                     sequence_id,
-                    None,  # get_logprob_infos(i, logprob_infos),
+                    [logprob_info] if logprob_info else None,
                 )
             )
         return outputs
     except RuntimeError:
+        assert 0
         # Fallback to per-token sampling in case some logits values are corrupted.
         err_msg = (
             "Error from sampling: probability tensor contains either `inf`, `nan`"
