@@ -455,6 +455,7 @@ class Model:
             self._copy_stream,
             self.torch_dtype,
             self.torch_dev,
+            past_decode_tokens,
         )
 
 

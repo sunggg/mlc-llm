@@ -92,14 +92,14 @@ def sample_from_logits(
     # wait until all the tensors are loaded on GPU
     torch.cuda.current_stream().wait_stream(copy_stream)
     logits = adjust_logits(logits, sampling_metadata, vocab_size)
+    outputs: List[TextGenerationResult] = []
 
     try:
-        sampling_output: SamplingOutput = sample(
+        sampling_output: Optional[SamplingOutput] = sample(
             logits,
             sampling_metadata,
         )
 
-        outputs: List[TextGenerationResult] = []
         for i, (new_token, logprob_info) in enumerate(
             zip(sampling_output.next_tokens, sampling_output.logprob_infos)
         ):
@@ -113,8 +113,8 @@ def sample_from_logits(
                     [logprob_info] if logprob_info else None,
                 )
             )
-        return outputs
     except RuntimeError:
+        print("Taking fallback route...")
         # Fallback to per-token sampling in case some logits values are corrupted.
         err_msg = (
             "Error from sampling: probability tensor contains either `inf`, `nan`"
@@ -126,12 +126,11 @@ def sample_from_logits(
             logits_per_token = logits[i]
             sampling_param = sampling_metadata.sampling_params[i]
             past_decode_tokens_per_request = past_decode_tokens[i]
-            logprob_info = sampling_output.logprob_infos[i]
             # NOTE: Rerun the preparation for simplicity.
             # Assume this code path is taken rarely and the recomputation overhead is
             # marginal.
             with torch.cuda.stream(copy_stream):
-                sampling_metadata = SamplingMetadata.from_sampling_params(
+                new_sampling_metadata = SamplingMetadata.from_sampling_params(
                     [sampling_param],
                     past_decode_tokens_per_request,
                     torch_dtype,
@@ -139,14 +138,17 @@ def sample_from_logits(
                     vocab_size,
                 )
             torch.cuda.current_stream().wait_stream(copy_stream)
-            maybe_next_tokens_map = sample(
+            sampling_output: Optional[SamplingOutput] = sample(
                 torch.unsqueeze(logits_per_token, 0),
-                sampling_metadata,
+                new_sampling_metadata,
                 check_safety=True,
             )
+
+            new_token = sampling_output.next_tokens[0]
+            logprob_info = sampling_output.logprob_infos[0]
             # Valid sample
             request = requests[i]
-            if maybe_next_tokens_map is not None:
+            if sampling_output is not None:
                 outputs.append(
                     prepare_textgen_result(
                         request,
@@ -166,7 +168,7 @@ def sample_from_logits(
                     )
                 )
 
-        return outputs
+    return outputs
 
 
 def prepare_inputs(
