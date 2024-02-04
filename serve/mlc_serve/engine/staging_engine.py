@@ -219,7 +219,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                     gen_seq = state.generation_sequences[seq_output.id.sequence_index]
                     new_token_ids = seq_output.new_tokens
 
-                    print("Prepare")
                     if new_token_ids:
                         delta, logprob_info = prepare_output(
                             gen_seq,
@@ -231,8 +230,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                         )
                     else:
                         delta = None
-                        logprob_info = None
-                    print("Done")
 
                     if not state.is_prefilled:
                         # Successfully completed a prefill request

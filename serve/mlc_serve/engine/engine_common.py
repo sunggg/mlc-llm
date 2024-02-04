@@ -169,6 +169,49 @@ def check_stopping_sequences(stopping_criteria, output_text, delta, is_ended):
     return output_text, delta, is_ended
 
 
+def prepare_logprob(
+    logprob_info,
+    delta,
+    gen_seq: GenerationSequence,
+    prompt_token_ids,
+    tokenizer,
+):
+    if logprob_info is None:
+        return []
+
+    outputs = []
+    for info in logprob_info:
+        assert info is not None
+        assert info.top_token_ids is not None
+        assert info.top_logprobs is not None
+
+        top_logprobs: List[TopLogprobs] = []
+        token_ids = info.top_token_ids.cpu().numpy()
+        logprobs = info.top_logprobs.cpu().numpy()
+
+        for top_token_id, top_logprob in zip(token_ids, logprobs):
+            top_logprobs.append(
+                TopLogprobs(
+                    token=detokenize_incrementally(
+                        prompt_token_ids, gen_seq, tokenizer, top_token_id
+                    ),
+                    logprob=float(top_logprob),
+                    # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
+                    bytes=None,
+                )
+            )
+
+        logprobs_content = LogprobsContent(
+            token=delta,
+            logprob=info.current_logprob,
+            # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
+            bytes=None,
+            top_logprobs=top_logprobs,
+        )
+        outputs.append(logprobs_content)
+    return outputs
+
+
 def prepare_output(
     gen_seq: GenerationSequence,
     new_token_ids: list[int],
@@ -184,39 +227,9 @@ def prepare_output(
     delta = detokenize_incrementally(prompt_token_ids, gen_seq, tokenizer)
     gen_seq.output_text += delta
 
-    out_logprob_info = []
-    if logprob_info is not None:
-        for info in logprob_info:
-            assert info is not None
-            assert info.top_token_ids is not None
-            assert info.top_logprobs is not None
-
-            top_logprobs: List[TopLogprobs] = []
-            token_ids = info.top_token_ids.cpu().numpy()
-            logprobs = info.top_logprobs.cpu().numpy()
-
-            for top_token_id, top_logprob in zip(token_ids, logprobs):
-                top_logprobs.append(
-                    TopLogprobs(
-                        token=detokenize_incrementally(
-                            prompt_token_ids, gen_seq, tokenizer, top_token_id
-                        ),
-                        logprob=float(top_logprob),
-                        # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
-                        bytes=None,
-                    )
-                )
-
-            logprobs_content = LogprobsContent(
-                token=delta,
-                logprob=info.current_logprob,
-                # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
-                bytes=None,
-                top_logprobs=top_logprobs,
-            )
-            out_logprob_info.append(logprobs_content)
-
-    # logprob_info = prepare_logprob_output(logprob_info, delta)
+    out_logprob_info = prepare_logprob(
+        logprob_info, delta, gen_seq, prompt_token_ids, tokenizer
+    )
 
     gen_seq.output_text, delta, gen_seq.is_finished = check_stopping_sequences(
         stopping_criteria, gen_seq.output_text, delta, gen_seq.is_finished

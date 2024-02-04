@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import structlog
 import numpy as np
@@ -7,12 +7,8 @@ import tvm
 
 from .paged_cache_manager import CacheManager
 from ..engine import (
-    SamplingType,
-    SamplingParams,
     get_prompt_sequence_id,
-    LOGPROB_TOP_K_MAX,
     PROMPT_SEQEUNCE_INDEX,
-    RawLogprobsInfo,
     RawLogprobsInfos,
     SequenceId,
 )
@@ -108,7 +104,6 @@ def sample_from_logits(
         ):
             sequence_id = sequence_ids[i]
             request = requests[i]
-            request.sampling_params.output_tokens.append(new_token)
             outputs.append(
                 prepare_textgen_result(
                     request,
@@ -135,6 +130,7 @@ def sample_from_logits(
             with torch.cuda.stream(copy_stream):
                 sampling_metadata = SamplingMetadata.from_sampling_params(
                     [sampling_param],
+                    list_past_output_tokens,
                     torch_dtype,
                     torch_dev,
                     vocab_size,

@@ -238,7 +238,11 @@ class Model:
         # CPU<->GPU data transfer with GPU computation in forward pass.
         with torch.cuda.stream(self._copy_stream):
             sampling_metadata = SamplingMetadata.from_sampling_params(
-                sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
+                sampling_params,
+                list_past_output_tokens,
+                self.torch_dtype,
+                self.torch_dev,
+                self.vocab_size,
             )
 
         (
@@ -318,15 +322,19 @@ class Model:
         sequence_ids = []
         prompt_lens = []
         sampling_params = []
-
+        past_decode_tokens = []
         for request in requests:
             if isinstance(request, PrefillRequest):
                 seq_id = get_prompt_sequence_id(request.request_id)
+                request_past_decode_tokens = [[]]
             else:
                 seq_id = request.sequence_id
                 prompt_lens.append(request.prompt_token_counts)
+                request_past_decode_tokens = [[], *request.token_ids]
 
+            past_decode_tokens.append(request_past_decode_tokens)
             sequence_ids.append(seq_id)
+
             assert not isinstance(request, EvalMultiQueryRequest)
             all_token_ids.append(request.token_ids)
             sampling_params.append(request.sampling_params)
@@ -335,7 +343,11 @@ class Model:
         # CPU<->GPU data transfer with GPU computation in forward pass.
         with torch.cuda.stream(self._copy_stream):
             sampling_metadata = SamplingMetadata.from_sampling_params(
-                sampling_params, self.torch_dtype, self.torch_dev, self.vocab_size
+                sampling_params,
+                past_decode_tokens,
+                self.torch_dtype,
+                self.torch_dev,
+                self.vocab_size,
             )
 
         (

@@ -15,21 +15,19 @@ LOG = structlog.stdlib.get_logger(__name__)
 
 
 def _apply_top_p_top_k(logits, top_ps, top_ks):
-    p = torch.tensor(top_ps, dtype=logits.dtype, device=logits.device)
-    k = torch.tensor(top_ks, dtype=torch.int, device=logits.device)
     logits_sort, logits_idx = logits.sort(dim=-1, descending=True)
 
     # Apply top-p.
     probs_sort = logits_sort.softmax(dim=-1)
     probs_sum = probs_sort.cumsum(dim=-1)
-    top_p_mask = (probs_sum - probs_sort) > p.unsqueeze(dim=1)
+    top_p_mask = (probs_sum - probs_sort) > top_ps.unsqueeze(dim=1)
     logits_sort[top_p_mask] = -float("inf")
 
     # Apply top-k.
     # Create a mask for the top-k elements.
     top_k_mask = torch.arange(logits_idx.shape[-1], device=logits_idx.device)
     top_k_mask = top_k_mask.expand(logits_idx.shape[0], -1)
-    top_k_mask = top_k_mask >= k.unsqueeze(dim=1)
+    top_k_mask = top_k_mask >= top_ks.unsqueeze(dim=1)
     logits_sort[top_k_mask] = -float("inf")
 
     # Re-sort the probabilities.
@@ -143,7 +141,7 @@ class SamplingTensors:
         list_repetition_penalties: List[float],
         list_logit_bias_indices: List["long"],
         list_logit_bias_values: List[float],
-        list_past_output_tokens: List["long"],
+        list_past_output_tokens: List[List["long"]],
     ):
         # NOTE: Keep `mask_random_t` and `mask_greedy_t` tensors in CPU.
         #       Moving them to gpu showed a small performance regression.
@@ -247,6 +245,7 @@ class SamplingMetadata:
     def from_sampling_params(
         cls,
         sampling_params: SamplingParams,
+        list_past_output_tokens: List[List[int]],
         dtype: torch.dtype,
         dev: str,
         vocab_size: int,
@@ -264,7 +263,6 @@ class SamplingMetadata:
         list_repetition_penalties = []
         list_logit_bias_indices = []
         list_logit_bias_values = []
-        list_past_output_tokens = []
 
         index_map = {}
         idx_random = -1
@@ -307,8 +305,6 @@ class SamplingMetadata:
                 param.top_logprobs,
                 idxs_logprob[param.top_logprobs],
             )
-
-            list_past_output_tokens.append(param.output_tokens)
 
             apply_penalty |= (
                 abs(param.presence_penalty) >= SAMPLING_EPS

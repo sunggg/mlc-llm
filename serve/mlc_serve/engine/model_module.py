@@ -19,6 +19,7 @@ from .sampling_params import SamplingParams
 @dataclass
 class PrefillRequest:
     request_id: RequestId
+    # prompt_token_ids
     token_ids: List[int]
     # Number of sequences to generate
     num_sequence: int
