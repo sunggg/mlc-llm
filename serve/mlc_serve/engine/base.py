@@ -23,10 +23,6 @@ class RawLogprobsInfo:
     top_logprobs: Optional[np.ndarray]
 
 
-# TODO(sunggg): can we delete this?
-RawLogprobsInfos = List[Optional[RawLogprobsInfo]]
-
-
 # TODO(@sunggg): consider transition to something like Pydantic
 @dataclass
 class MLCServeEngineConfig:

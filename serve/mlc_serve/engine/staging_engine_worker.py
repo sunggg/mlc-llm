@@ -12,12 +12,12 @@ import structlog
 
 from .base import (
     FinishReason,
-    RawLogprobsInfos,
     RequestId,
     RequestState,
     ValidationError,
     SequenceId,
     GenerationSequence,
+    RawLogprobsInfo,
 )
 
 from .metrics import PrometheusMetrics
@@ -66,7 +66,7 @@ class SequenceGenerationOutput:
     new_tokens: List[int]
     finish_reason: Optional[FinishReason] = None
     error: Optional[Union[str, ValidationError]] = None
-    logprob_info: Optional[RawLogprobsInfos] = None
+    logprob_info: Optional[RawLogprobsInfo] = None
 
 
 @dataclass

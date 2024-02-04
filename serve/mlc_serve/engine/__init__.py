@@ -17,7 +17,6 @@ from .base import (
     PROMPT_SEQEUNCE_INDEX,
     get_prompt_sequence_id,
     RawLogprobsInfo,
-    RawLogprobsInfos,
 )
 from .sampling_params import (
     SamplingParams,

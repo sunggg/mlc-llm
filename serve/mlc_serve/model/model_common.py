@@ -9,8 +9,8 @@ from .paged_cache_manager import CacheManager
 from ..engine import (
     get_prompt_sequence_id,
     PROMPT_SEQEUNCE_INDEX,
-    RawLogprobsInfos,
     SequenceId,
+    RawLogprobsInfo,
 )
 from ..engine.model_module import (
     PrefillRequest,
@@ -50,7 +50,7 @@ def prepare_textgen_result(
     request: RequestType,
     new_token: List[int],
     sequence_id: SequenceId,
-    logprob_info: Optional[RawLogprobsInfos],
+    logprob_info: Optional[RawLogprobsInfo],
     err_msg: Optional[str] = None,
 ) -> List[TextGenerationResult]:
     if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
@@ -114,7 +114,6 @@ def sample_from_logits(
                 )
             )
     except RuntimeError:
-        print("Taking fallback route...")
         # Fallback to per-token sampling in case some logits values are corrupted.
         err_msg = (
             "Error from sampling: probability tensor contains either `inf`, `nan`"

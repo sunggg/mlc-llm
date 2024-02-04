@@ -61,56 +61,6 @@ def _multinomial(
     return probs.div_(q).argmax(dim=1).view(-1, num_samples)
 
 
-def get_logprob_infos(
-    i: int,
-    logprob_infos: Optional[List[Optional[RawLogprobsInfo]]],
-) -> Optional[List[Optional[RawLogprobsInfo]]]:
-    if logprob_infos is None or logprob_infos[i] is None:
-        return None
-    return [logprob_infos[i]]
-
-
-def get_raw_logprob_info(
-    logits,
-    token_id,
-    top_logprobs_num,
-) -> RawLogprobsInfo:
-    logprobs = torch.log_softmax(logits, dim=-1)
-    res_logprob = logprobs[token_id]
-
-    if top_logprobs_num == 0:
-        top_logprobs = None
-        top_tokens = None
-    else:
-        assert top_logprobs_num <= LOGPROB_TOP_K_MAX, "Invalid input top_logprobs"
-        top_logprobs, top_tokens = torch.topk(
-            logprobs, k=top_logprobs_num, dim=-1, largest=True, sorted=True
-        )
-        top_tokens = top_tokens.cpu().numpy()
-        top_logprobs = top_logprobs.cpu().numpy()
-
-    # Set to raw logprob info
-    return RawLogprobsInfo(
-        current_token_id=token_id,
-        current_logprob=res_logprob,
-        top_token_ids=top_tokens,
-        top_logprobs=top_logprobs,
-    )
-
-
-def check_logprob_infos(
-    logprob_infos,  #: RawLogprobsInfos,
-):  # -> Optional[RawLogprobsInfos]:
-    check = False
-    for info in logprob_infos:
-        if info is not None:
-            check = True
-            break
-    if check:
-        return logprob_infos
-    return None
-
-
 @dataclass
 class SamplingTensors:
     mask_random: torch.Tensor
@@ -453,16 +403,18 @@ def sample(
         sampling_tensors.mask_greedy,
         sampling_tensors.mask_random,
     )
+
     if sampling_metadata.has_greedy:
         logits_greedy = logits[mask_greedy_t]
         res_greedy = torch.argmax(logits_greedy, -1)
 
+    probs_random = None
     if sampling_metadata.has_random:
         logits_random = logits[mask_random_t]
-        probs = torch.softmax(logits_random, dim=-1)
-        if check_safety and not _is_safe_to_sample(probs):
+        probs_random = torch.softmax(logits_random, dim=-1)
+        if check_safety and not _is_safe_to_sample(probs_random):
             return None
-        res_random = _multinomial(probs, 1)[:, 0]
+        res_random = _multinomial(probs_random, 1)[:, 0]
 
     # Prepare output
     # Send results to CPU and convert them into numpy
@@ -470,6 +422,7 @@ def sample(
     res_random = list(res_random.cpu().numpy()) if res_random is not None else list()
 
     # Recover original order in the batch
+    # TODO: Can we vectorize this?
     next_tokens = []
     for batch_idx in range(batch_size):
         sampling_info = sampling_metadata.index_map[batch_idx]
@@ -484,8 +437,13 @@ def sample(
     logprob_infos = [None] * batch_size
     if sampling_metadata.has_logprob:
         all_top_logprobs, all_top_tokens = [[]], [[]]
-        # TODO: Can we reuse softmax(random_logits)?
-        logprobs = torch.log_softmax(logits, dim=-1)
+        # If everything is random sampling, save one extra softmax
+        if not sampling_metadata.has_greedy:
+            assert probs_random is not None
+            logprobs = torch.log(probs_random)
+        else:
+            logprobs = torch.log_softmax(logits, dim=-1)
+
         for lp_idx in range(LOGPROB_TOP_K_MAX):
             logprob_topk = lp_idx + 1
             mask_t = sampling_metadata.sampling_tensors.mask_top_logprob[logprob_topk]
@@ -496,6 +454,7 @@ def sample(
             all_top_tokens.append(top_tokens)
 
         # recover original batch order
+        # TODO: Can we vectorize this?
         for batch_idx in range(batch_size):
             logprob_topk, idx = sampling_metadata.logprob_index_map[batch_idx]
             next_token = next_tokens[batch_idx]
