@@ -310,8 +310,10 @@ class Model:
         requests: List[RequestType],
         cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
-        if len(requests) == 0:
+        batch_size = len(requests)
+        if batch_size == 0:
             return []
+        LOG.debug(f"Batch size: {batch_size}")
 
         is_prefill = isinstance(requests[0], PrefillRequest)
         is_multi_query_decode = isinstance(requests[0], EvalMultiQueryRequest)

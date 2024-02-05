@@ -35,32 +35,6 @@ def _apply_top_p_top_k(logits, top_ps, top_ks):
     return logits
 
 
-# TODO(@sunggg): Test its performance and drop if unnecesary
-# torch.multinomial forces a GPU<->CPU sync.
-# Therefore, we use an optimized implementation instead.
-# Note that we always sample with replacement.
-# probs will be modified in place, but this is fine, as we pass
-# in a copy already.
-def _multinomial(
-    probs: torch.Tensor,
-    num_samples: int,
-):
-    if num_samples > 1:
-        # This is equivalent to torch.repeat_interleaved (which also
-        # forces a GPU<->CPU sync).
-        # This allows us to do sampling with replacement by creating
-        # num_samples copies of each row in the tensor, and then
-        # batch sampling the resulting tensor.
-        probs = (
-            probs[:, None, :]
-            .expand(probs.shape[0], num_samples, probs.shape[1])
-            .contiguous()
-            .view(-1, probs.shape[1])
-        )
-    q = torch.empty_like(probs).exponential_(1)
-    return probs.div_(q).argmax(dim=1).view(-1, num_samples)
-
-
 @dataclass
 class SamplingTensors:
     mask_random: torch.Tensor
@@ -147,6 +121,8 @@ class SamplingTensors:
             device="cpu",
             pin_memory=True,
         )
+        # Convert 1-based index to 0-based
+        logit_bias_indices -= 1
         logit_bias_values = torch.tensor(
             list_logit_bias_values,
             dtype=dtype,
@@ -224,6 +200,7 @@ class SamplingMetadata:
         list_mask_top_logprob = np.full(
             ((LOGPROB_TOP_K_MAX) + 1, batch_size), False, dtype=bool
         )
+        logit_bias_maxlen = 0
         idxs_logprob = [-1] * ((LOGPROB_TOP_K_MAX) + 1)
         for batch_idx, param in enumerate(sampling_params):
             # Prepare temperature
@@ -268,11 +245,11 @@ class SamplingMetadata:
             if param.logit_bias_index:
                 assert param.logit_bias_value
                 apply_bias |= True
+                logit_bias_maxlen = max(logit_bias_maxlen, len(param.logit_bias_index))
                 list_logit_bias_indices.append(param.logit_bias_index)
                 list_logit_bias_values.append(param.logit_bias_value)
             else:
                 list_logit_bias_indices.append([])
-                list_logit_bias_values.append([])
 
         num_random_samples = idx_random + 1
         num_greedy_samples = idx_greedy + 1
@@ -280,8 +257,17 @@ class SamplingMetadata:
 
         has_random = num_random_samples > 0
         has_greedy = num_greedy_samples > 0
-
         apply_top_p_top_k = do_top_p | do_top_k
+
+        if apply_bias:
+            # Match the length of each request by padding
+            for ii in range(batch_size):
+                logit_bias_values = list_logit_bias_values[ii]
+                num_padding = logit_bias_maxlen - len(logit_bias_values)
+                # arbitrary index
+                list_logit_bias_indices[ii] += [1] * num_padding
+                list_logit_bias_values[ii] += [0] * num_padding
+
         sampling_tensors = SamplingTensors.from_lists(
             dtype,
             dev,
@@ -371,9 +357,10 @@ def adjust_logits(logits, sampling_metadata, vocab_size):
         logits = _apply_top_p_top_k(logits, top_ps_t, top_ks_t)
 
     if apply_bias:
-        logits.scatter_add_(
-            1, logit_bias_indices_t, torch.ones_like(logit_bias_values_t)
-        )
+        # logits.scatter_add_ performs the following computation:
+        #   logit[i][index[i][j]] += src[i][j]
+        #     where 0<=i<src.shape[0] && 0<=j<src.shape[1]
+        logits.scatter_add_(dim=1, index=logit_bias_indices_t, src=logit_bias_values_t)
     return logits
 
 
@@ -414,7 +401,7 @@ def sample(
         probs_random = torch.softmax(logits_random, dim=-1)
         if check_safety and not _is_safe_to_sample(probs_random):
             return None
-        res_random = _multinomial(probs_random, 1)[:, 0]
+        res_random = torch.multinomial(probs_random, 1, True)[:, 0]
 
     # Prepare output
     # Send results to CPU and convert them into numpy

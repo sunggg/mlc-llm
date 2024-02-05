@@ -65,6 +65,8 @@ class SamplingParams:
     logit_bias_value: list[float] = None
     logprobs: bool = False
     top_logprobs: int = 0
+    # TODO(@team): Hardcoded for now. How does API level get this info?
+    vocab_size = 32000
 
     def __post_init__(self):
         if self.logit_bias:
@@ -105,6 +107,9 @@ class SamplingParams:
                     raise ValueError(
                         f"logit bias must be in [-100, 100], got {bias} for token {token}."
                     )
+                if not 1 <= token <= self.vocab_size:
+                    raise ValueError(f"index must be in [1, vocab_size]")
+
         if self.logprobs:
             if self.top_logprobs < 0 or self.top_logprobs > LOGPROB_TOP_K_MAX:
                 raise ValueError(
