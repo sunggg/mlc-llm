@@ -97,6 +97,10 @@ class SamplingParams:
             )
         if not 0.0 < self.top_p <= 1.0:
             raise ValueError(f"top_p must be in (0, 1], got {self.top_p}.")
+
+        if not isinstance(self.top_k, int):
+            raise ValueError(f"top_k must be integer.")
+
         if self.top_k < -1 or self.top_k == 0:
             raise ValueError(
                 f"top_k must be -1 (disable), or at least 1, " f"got {self.top_k}."
@@ -109,6 +113,11 @@ class SamplingParams:
                     )
                 if not 1 <= token <= self.vocab_size:
                     raise ValueError(f"index must be in [1, vocab_size]")
+
+        if self.repetition_penalty <= 0:
+            raise ValueError(
+                f"repetition penalty should be a positive float value, got {self.repetition_penalty}."
+            )
 
         if self.logprobs:
             if self.top_logprobs < 0 or self.top_logprobs > LOGPROB_TOP_K_MAX:

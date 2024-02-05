@@ -15,6 +15,7 @@ LOG = structlog.stdlib.get_logger(__name__)
 
 
 def _apply_top_p_top_k(logits, top_ps, top_ks):
+    # TODO(@team): Check the ordering. We currently apply top-p -> top-k.
     logits_sort, logits_idx = logits.sort(dim=-1, descending=True)
 
     # Apply top-p.
@@ -267,6 +268,16 @@ class SamplingMetadata:
                 # arbitrary index
                 list_logit_bias_indices[ii] += [1] * num_padding
                 list_logit_bias_values[ii] += [0] * num_padding
+
+        max_num_past_tokens = 0
+        for past_output_tokens in list_past_output_tokens:
+            max_num_past_tokens = max(max_num_past_tokens, len(past_output_tokens))
+
+        for i in range(batch_size):
+            num = len(list_past_output_tokens[i])
+            list_past_output_tokens[i] = list_past_output_tokens[i] + [vocab_size] * (
+                max_num_past_tokens - num
+            )
 
         sampling_tensors = SamplingTensors.from_lists(
             dtype,
