@@ -10,6 +10,7 @@ import inspect
 
 from .sampling_params import SamplingParams, SamplingType
 from ..openai_logprob_protocol import LogprobsContent
+from ..model.base import ModelArtifactConfig
 
 LOG = structlog.stdlib.get_logger(__name__)
 RequestId = str
@@ -199,6 +200,12 @@ class InferenceStepResult:
 
 
 class InferenceEngine(ABC):
+    """
+    Expose the model config to the high-level APIs.
+    """
+
+    model_artifact_config: ModelArtifactConfig
+
     @abstractmethod
     def add(self, requests: list[Request]) -> None:
         """
