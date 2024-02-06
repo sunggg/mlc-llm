@@ -271,19 +271,61 @@ def _test_logprobs(
         for res in results.outputs:
             assert len(res.sequences) == 1
             seq = res.sequences[0]
-            assert (
-                seq.finish_reason is not None
-                or len(seq.logprob_info[0].top_logprobs)
-                == requests[int(res.request_id)].sampling_params.top_logprobs
-            )
+            req = requests[int(res.request_id)]
 
             if seq.is_finished:
-                assert (
-                    seq.num_generated_tokens
-                    == requests[int(res.request_id)].stopping_criteria.max_tokens
-                )
+                assert seq.finish_reason is not None
+                assert seq.num_generated_tokens == req.stopping_criteria.max_tokens
                 assert seq.finish_reason == FinishReason.Length
             else:
+                assert (
+                    len(seq.logprob_info[0].top_logprobs)
+                    == req.sampling_params.top_logprobs
+                )
+                generated[int(res.request_id)] += seq.delta
+
+
+def _test_logprobs_mixed_requests(
+    engine,
+    num_requests=10,
+):
+    prompt = "hi could you please implement merge sort?"
+    requests = [
+        create_request(
+            idx=str(n),
+            prompt=prompt,
+            temp=0,
+            freq_pen=0,
+            pre_pen=0,
+            max_tokens=300,
+            stop=None,
+            ignore_eos=True,
+            top_logprobs=random.randint(1, 5),
+            logprobs=random.choice([True, False]),
+        )
+        for n in range(num_requests)
+    ]
+    engine.add(requests)
+
+    generated = ["" for _ in range(num_requests)]
+    while engine.has_pending_requests():
+        results = engine.step()
+        for res in results.outputs:
+            assert len(res.sequences) == 1
+            seq = res.sequences[0]
+            req = requests[int(res.request_id)]
+            if seq.is_finished:
+                assert seq.finish_reason is not None
+                assert seq.num_generated_tokens == req.stopping_criteria.max_tokens
+                assert seq.finish_reason == FinishReason.Length
+            else:
+                if req.sampling_params.logprobs:
+                    assert (
+                        len(seq.logprob_info[0].top_logprobs)
+                        == req.sampling_params.top_logprobs
+                    )
+                else:
+                    assert len(seq.logprob_info) == 0
                 generated[int(res.request_id)] += seq.delta
 
 
@@ -302,6 +344,7 @@ if __name__ == "__main__":
     # TODO (@sunggg): There is something stateful.
     # _test_stop(staging_engine)
     _test_logprobs(staging_engine)
+    _test_logprobs_mixed_requests(staging_engine)
 
     # These tests are broken since we are now imposing no length limit
     # if max_tokens = None. The tests do not finish in a reasonable time.
@@ -316,6 +359,7 @@ if __name__ == "__main__":
     _test_ignore_eos(sync_engine)
     _test_stop(sync_engine)
     _test_logprobs(sync_engine)
+    _test_logprobs_mixed_requests(sync_engine)
     # These tests are broken since we are now imposing no length limit
     # if max_tokens = None. The tests do not finish in a reasonable time.
     # _test_max_context_length(sync_engine)

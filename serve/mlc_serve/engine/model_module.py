@@ -81,7 +81,7 @@ class TextGenerationResult:
     # making this a list of token ids to leave room for speculative decoding
     generated_tokens: List[int]
     error: Optional[str]
-    logprob_info: Optional[List[RawLogprobsInfo]]
+    logprob_info: Optional[List[Optional[RawLogprobsInfo]]]
 
 
 class KVCache(Protocol):

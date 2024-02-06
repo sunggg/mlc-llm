@@ -170,7 +170,7 @@ def check_stopping_sequences(stopping_criteria, output_text, delta, is_ended):
 
 
 def prepare_logprob(
-    logprob_info: Optional[List[RawLogprobsInfo]],
+    logprob_info: Optional[List[Optional[RawLogprobsInfo]]],
     delta: str,
     gen_seq: GenerationSequence,
     prompt_token_ids: List[int],

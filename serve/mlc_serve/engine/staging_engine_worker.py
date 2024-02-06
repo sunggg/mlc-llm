@@ -66,7 +66,7 @@ class SequenceGenerationOutput:
     new_tokens: List[int]
     finish_reason: Optional[FinishReason] = None
     error: Optional[Union[str, ValidationError]] = None
-    logprob_info: Optional[List[RawLogprobsInfo]] = None
+    logprob_info: Optional[List[Optional[RawLogprobsInfo]]] = None
 
 
 @dataclass

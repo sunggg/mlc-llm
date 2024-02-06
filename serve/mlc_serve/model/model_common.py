@@ -50,7 +50,7 @@ def prepare_textgen_result(
     request: RequestType,
     new_token: List[int],
     sequence_id: SequenceId,
-    logprob_info: Optional[List[RawLogprobsInfo]],
+    logprob_info: Optional[List[Optional[RawLogprobsInfo]]],
     err_msg: Optional[str] = None,
 ) -> List[TextGenerationResult]:
     outputs = []

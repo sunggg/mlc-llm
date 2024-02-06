@@ -162,8 +162,8 @@ class SamplingMetadata:
     apply_top_p_top_k: bool
     apply_penalty: bool
     apply_bias: bool
-    # mapping for <batch index, tuple(top-k, top-k index)>
-    logprob_index_map: dict[int, Tuple[int, int]]
+    # mapping for <batch index, Tuple(logprob, top-k, top-k index)>
+    logprob_index_map: dict[int, Tuple[bool, int, int]]
     has_logprob: bool
     sampling_tensors: SamplingTensors
     sampling_params: List[SamplingParams]
@@ -230,6 +230,7 @@ class SamplingMetadata:
             has_logprob |= param.logprobs
             idxs_logprob[param.top_logprobs] += 1
             logprob_index_map[batch_idx] = (
+                param.logprobs,
                 param.top_logprobs,
                 idxs_logprob[param.top_logprobs],
             )
@@ -455,12 +456,17 @@ def sample(
         # recover original batch order
         # TODO: Can we vectorize this?
         for batch_idx in range(batch_size):
-            logprob_topk, idx = sampling_metadata.logprob_index_map[batch_idx]
+            is_logprobs, logprob_topk, idx = sampling_metadata.logprob_index_map[
+                batch_idx
+            ]
             next_token = next_tokens[batch_idx]
-            logprob_infos[batch_idx] = RawLogprobsInfo(
-                current_token_id=next_token,
-                current_logprob=logprobs[batch_idx][next_token],
-                top_token_ids=all_top_tokens[logprob_topk][idx],
-                top_logprobs=all_top_logprobs[logprob_topk][idx],
-            )
+            if is_logprobs:
+                logprob_infos[batch_idx] = RawLogprobsInfo(
+                    current_token_id=next_token,
+                    current_logprob=logprobs[batch_idx][next_token],
+                    top_token_ids=all_top_tokens[logprob_topk][idx],
+                    top_logprobs=all_top_logprobs[logprob_topk][idx],
+                )
+            else:
+                logprob_infos[batch_idx] = None
     return SamplingOutput(next_tokens, logprob_infos)
