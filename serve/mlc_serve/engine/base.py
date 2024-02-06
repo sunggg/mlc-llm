@@ -20,8 +20,8 @@ RequestId = str
 class RawLogprobsInfo:
     current_token_id: int
     current_logprob: float
-    top_token_ids: Optional[torch.Tensor]  # List[
-    top_logprobs: Optional[torch.Tensor]  # List[
+    top_token_ids: Optional[torch.Tensor]
+    top_logprobs: Optional[torch.Tensor]
 
 
 # TODO(@sunggg): consider transition to something like Pydantic
