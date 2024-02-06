@@ -226,7 +226,6 @@ def _test_stop(
                 generated[int(res.request_id)] += seq.delta
 
             if seq.is_finished:
-                completed += 1
                 assert (
                     seq.finish_reason == FinishReason.Stop
                 ), f"{seq.finish_reason.name}"
@@ -286,7 +285,6 @@ def _test_logprobs(
                 assert seq.finish_reason == FinishReason.Length
             else:
                 generated[int(res.request_id)] += seq.delta
-        break
 
 
 if __name__ == "__main__":

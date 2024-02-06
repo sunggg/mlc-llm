@@ -50,25 +50,31 @@ def prepare_textgen_result(
     request: RequestType,
     new_token: List[int],
     sequence_id: SequenceId,
-    logprob_info: Optional[RawLogprobsInfo],
+    logprob_info: Optional[List[RawLogprobsInfo]],
     err_msg: Optional[str] = None,
 ) -> List[TextGenerationResult]:
+    outputs = []
     if sequence_id.sequence_index == PROMPT_SEQEUNCE_INDEX:
         assert isinstance(request, PrefillRequest)
         for seq_id in range(request.num_sequence):  # type: ignore
-            return TextGenerationResult(
-                sequence_id=SequenceId(sequence_id.request_id, seq_id),
+            outputs.append(
+                TextGenerationResult(
+                    sequence_id=SequenceId(sequence_id.request_id, seq_id),
+                    generated_tokens=new_token,
+                    error=err_msg,
+                    logprob_info=logprob_info,
+                )
+            )
+    else:
+        outputs.append(
+            TextGenerationResult(
+                sequence_id=sequence_id,
                 generated_tokens=new_token,
                 error=err_msg,
                 logprob_info=logprob_info,
             )
-    else:
-        return TextGenerationResult(
-            sequence_id=sequence_id,
-            generated_tokens=new_token,
-            error=err_msg,
-            logprob_info=logprob_info,
         )
+    return outputs
 
 
 def sample_from_logits(
@@ -80,7 +86,7 @@ def sample_from_logits(
     copy_stream: torch.cuda.Stream,
     torch_dtype: torch.dtype,
     torch_dev: str,
-    past_decode_tokens,
+    past_decode_tokens: List[List[int]],
 ) -> List[TextGenerationResult]:
     batch_size = logits.shape[0]
     assert batch_size == len(requests)
@@ -105,7 +111,7 @@ def sample_from_logits(
         ):
             sequence_id = sequence_ids[i]
             request = requests[i]
-            outputs.append(
+            outputs.extend(
                 prepare_textgen_result(
                     request,
                     [new_token],
@@ -131,24 +137,24 @@ def sample_from_logits(
             with torch.cuda.stream(copy_stream):
                 new_sampling_metadata = SamplingMetadata.from_sampling_params(
                     [sampling_param],
-                    past_decode_tokens_per_request,
+                    [past_decode_tokens_per_request],
                     torch_dtype,
                     torch_dev,
                     vocab_size,
                 )
             torch.cuda.current_stream().wait_stream(copy_stream)
-            sampling_output: Optional[SamplingOutput] = sample(
+            maybe_sampling_output: Optional[SamplingOutput] = sample(
                 torch.unsqueeze(logits_per_token, 0),
                 new_sampling_metadata,
                 check_safety=True,
             )
 
-            new_token = sampling_output.next_tokens[0]
-            logprob_info = sampling_output.logprob_infos[0]
+            new_token = maybe_sampling_output.next_tokens[0]
+            logprob_info = maybe_sampling_output.logprob_infos[0]
             # Valid sample
             request = requests[i]
-            if sampling_output is not None:
-                outputs.append(
+            if maybe_sampling_output is not None:
+                outputs.extend(
                     prepare_textgen_result(
                         request,
                         [new_token],
@@ -157,7 +163,7 @@ def sample_from_logits(
                     )
                 )
             else:
-                outputs.append(
+                outputs.extend(
                     prepare_textgen_result(
                         request,
                         [],

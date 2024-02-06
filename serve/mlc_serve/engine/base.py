@@ -1,5 +1,6 @@
 from __future__ import annotations
 import structlog
+import torch
 from dataclasses import dataclass, field
 from enum import Enum
 from abc import ABC, abstractmethod
@@ -19,8 +20,8 @@ RequestId = str
 class RawLogprobsInfo:
     current_token_id: int
     current_logprob: float
-    top_token_ids: Optional[np.ndarray]
-    top_logprobs: Optional[np.ndarray]
+    top_token_ids: Optional[torch.Tensor]  # List[
+    top_logprobs: Optional[torch.Tensor]  # List[
 
 
 # TODO(@sunggg): consider transition to something like Pydantic

@@ -183,23 +183,25 @@ def prepare_logprob(
     for info in logprob_info:
         assert info is not None
         assert info.top_token_ids is not None
-        assert info.top_logprobs is not None
 
-        top_logprobs: List[TopLogprobs] = []
-        token_ids = info.top_token_ids.cpu().numpy()
-        logprobs = info.top_logprobs.cpu().numpy()
+        if info.top_logprobs is not None:
+            assert info.top_logprobs is not None
+            top_logprobs: List[TopLogprobs] = []
 
-        for top_token_id, top_logprob in zip(token_ids, logprobs):
-            top_logprobs.append(
-                TopLogprobs(
-                    token=detokenize_incrementally(
-                        prompt_token_ids, gen_seq, tokenizer, top_token_id
-                    ),
-                    logprob=float(top_logprob),
-                    # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
-                    bytes=None,
+            token_ids = info.top_token_ids.cpu().numpy()
+            logprobs = info.top_logprobs.cpu().numpy()
+
+            for top_token_id, top_logprob in zip(token_ids, logprobs):
+                top_logprobs.append(
+                    TopLogprobs(
+                        token=detokenize_incrementally(
+                            prompt_token_ids, gen_seq, tokenizer, top_token_id
+                        ),
+                        logprob=float(top_logprob),
+                        # TODO(vvchernov): implement bytes based on https://platform.openai.com/docs/api-reference/chat/object
+                        bytes=None,
+                    )
                 )
-            )
 
         logprobs_content = LogprobsContent(
             token=delta,

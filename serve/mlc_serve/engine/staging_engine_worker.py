@@ -66,7 +66,7 @@ class SequenceGenerationOutput:
     new_tokens: List[int]
     finish_reason: Optional[FinishReason] = None
     error: Optional[Union[str, ValidationError]] = None
-    logprob_info: Optional[RawLogprobsInfo] = None
+    logprob_info: Optional[List[RawLogprobsInfo]] = None
 
 
 @dataclass
@@ -285,7 +285,6 @@ class GenerationLoopWorker(EngineBase):
             ):
                 gen_seq.is_finished = True
                 finish_reason = FinishReason.Length
-
             outputs.append(
                 SequenceGenerationOutput(
                     id=res.sequence_id,

@@ -25,8 +25,8 @@ from ..engine.model_module import (
     DraftTokens,
     EvalMultiQueryRequest,
     PrefillRequest,
+    DecodeRequest,
     TextGenerationResult,
-    TextGenerator,
     RequestType,
 )
 from .sampler import SamplingMetadata
@@ -234,7 +234,8 @@ class Model:
                     last_query_offsets[-1] + request.queries.num_tokens
                 )
             sampling_params.append(request.sampling_params)
-            past_decode_tokens.append([[], *request.token_ids])
+            # Use `vocab_size` as a padding
+            past_decode_tokens.append([self.vocab_size, *request.queries.token_ids])
 
         # Prepare sampling tensors in another stream to overlap
         # CPU<->GPU data transfer with GPU computation in forward pass.
@@ -297,12 +298,13 @@ class Model:
         return sample_from_logits(
             last_query_logits,
             sequence_ids,
-            requests,
+            requests,  # type: ignore
             sampling_metadata,
             self.vocab_size,
             self._copy_stream,
             self.torch_dtype,
             self.torch_dev,
+            past_decode_tokens,
         )
 
     def generate(
@@ -327,15 +329,19 @@ class Model:
         prompt_lens = []
         sampling_params = []
         past_decode_tokens = []
-        # TODO: Better understand this `request_past_decode_tokens`
+
         for request in requests:
             if isinstance(request, PrefillRequest):
                 seq_id = get_prompt_sequence_id(request.request_id)
-                request_past_decode_tokens = [[]]
-            else:
+                # Use `vocab_size` as a padding
+                request_past_decode_tokens = [self.vocab_size]
+            elif isinstance(request, DecodeRequest):
                 seq_id = request.sequence_id
                 prompt_lens.append(request.prompt_token_counts)
-                request_past_decode_tokens = [[], *request.token_ids]
+                # Use `vocab_size` as a padding
+                request_past_decode_tokens = [self.vocab_size, *request.token_ids]
+            else:
+                raise Exception("`EvalMultiQueryRequest` should not reach here.")
 
             past_decode_tokens.append(request_past_decode_tokens)
             sequence_ids.append(seq_id)
@@ -463,7 +469,7 @@ class Model:
 
 def init_tvm_model(
     model_artifact_config: ModelArtifactConfig, engine_config: MLCServeEngineConfig
-) -> Tuple[TextGenerator, CacheManager]:
+) -> Tuple[Model, CacheManager]:
     dev = tvm.device("cuda", 0)
 
     model = Model(model_artifact_config, dev)

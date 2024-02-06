@@ -64,9 +64,9 @@ class SamplingTensors:
         list_frequency_penalties: List[float],
         list_presence_penalties: List[float],
         list_repetition_penalties: List[float],
-        list_logit_bias_indices: List["long"],
-        list_logit_bias_values: List[float],
-        list_past_output_tokens: List[List["long"]],
+        list_logit_bias_indices: List[List[int]],
+        list_logit_bias_values: List[List[float]],
+        list_past_output_tokens: List[List[int]],
     ):
         # NOTE: Keep `mask_random_t` and `mask_greedy_t` tensors in CPU.
         #       Moving them to gpu showed a small performance regression.
@@ -171,7 +171,7 @@ class SamplingMetadata:
     @classmethod
     def from_sampling_params(
         cls,
-        sampling_params: SamplingParams,
+        sampling_params: List[SamplingParams],
         list_past_output_tokens: List[List[int]],
         dtype: torch.dtype,
         dev: str,
@@ -236,7 +236,7 @@ class SamplingMetadata:
 
             apply_penalty |= (
                 abs(param.presence_penalty) >= SAMPLING_EPS
-                or abs(param.frequency_penalty >= SAMPLING_EPS)
+                or abs(param.frequency_penalty) >= SAMPLING_EPS
                 or abs(param.repetition_penalty - 1.0) >= SAMPLING_EPS
             )
             list_frequency_penalties.append(param.frequency_penalty)
@@ -386,7 +386,7 @@ def sample(
     logits: torch.Tensor,
     sampling_metadata,
     check_safety=False,
-) -> Optional[np.ndarray]:
+) -> SamplingOutput:
     def _is_safe_to_sample(prob_like):
         return (
             torch.sum(torch.isnan(prob_like) | torch.isinf(prob_like) | (prob_like < 0))
@@ -432,9 +432,10 @@ def sample(
             assert sampling_idx < len(res_greedy)
             next_tokens.append(res_greedy[sampling_idx])
 
-    logprob_infos = [None] * batch_size
+    logprob_infos: List[Optional[RawLogprobsInfo]] = [None] * batch_size
     if sampling_metadata.has_logprob:
-        all_top_logprobs, all_top_tokens = [[]], [[]]
+        all_top_logprobs = [torch.tensor([], device=logits.device)]
+        all_top_tokens = [torch.tensor([], device=logits.device)]
         # If everything is random sampling, save one extra softmax
         if not sampling_metadata.has_greedy:
             assert probs_random is not None
