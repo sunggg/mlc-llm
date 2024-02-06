@@ -45,6 +45,8 @@ class SamplingParams:
             to -1 to consider all tokens.
         logit_bias: The bias applied on the logit before sampling. Must be in
             [-100, 100].
+        logit_bias_index: Internal data container for indices extracted from logit_bias.
+        logit_bias_value: Internal data container for values extracted from logit_bias.
         logprobs: Optional[bool] Whether to return log probabilities of the output
             tokens or not. If true, returns the log probabilities of each output
             token returned in the content of message.
@@ -52,6 +54,8 @@ class SamplingParams:
             the number of most likely tokens to return at each token position,
             each with an associated log probability. logprobs must be set to
             true if this parameter is used.
+        vocab_size: Not a part of the sampling params, but need for the argument validation.
+            Remove this when we have a better solution.
     """
 
     presence_penalty: float = 0.0
@@ -65,7 +69,9 @@ class SamplingParams:
     logit_bias_value: list[float] = None
     logprobs: bool = False
     top_logprobs: int = 0
-    # TODO(@team): Hardcoded for now. How does API level get this info?
+    # TODO(@team): This info comes from the model config.
+    # Currently, it is unclear what is the best way to fetch this info and
+    # check in `_verify_args` without this field. Follow-up when we have a better idea.
     vocab_size = 32000
 
     def __post_init__(self):

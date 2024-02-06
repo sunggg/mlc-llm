@@ -30,6 +30,7 @@ from ..engine import (
     SamplingParams,
     StoppingCriteria,
 )
+from ..model.base import ModelArtifactConfig
 from ..engine.async_connector import AsyncEngineConnector
 from .dependencies import get_async_engine_connector
 
@@ -44,7 +45,9 @@ def create_error_response(status_code: HTTPStatus, message: str) -> JSONResponse
 router = APIRouter()
 
 
-def _get_sampling_params(request: ChatCompletionRequest) -> SamplingParams:
+def _get_sampling_params(
+    request: ChatCompletionRequest, model_artifact_config: ModelArtifactConfig
+) -> SamplingParams:
     sampling_params = SamplingParams(
         # These params came from vllm
         # TODO(amnalyshe): should they be put into mlc-llm batch serving ChatCompletionRequest?
@@ -68,6 +71,8 @@ def _get_sampling_params(request: ChatCompletionRequest) -> SamplingParams:
     if request.logprobs:
         sampling_params.top_logprobs = request.top_logprobs
         sampling_params.logprobs = request.logprobs
+
+    sampling_params.vocab_size = model_artifact_config.vocab_size
     return sampling_params
 
 
@@ -106,8 +111,10 @@ async def request_completion(
 
     request_id = f"cmpl-{random_uuid()}"
     model_name = request.model
+
+    model_artifact_config = async_engine_connector.engine.model_artifact_config
     try:
-        sampling_params = _get_sampling_params(request)
+        sampling_params = _get_sampling_params(request, model_artifact_config)
     except ValueError as e:
         raise ValueError(
             """
@@ -130,7 +137,9 @@ async def request_completion(
         messages=request.messages,
         num_sequences=request.n,
         sampling_params=sampling_params,
-        stopping_criteria=StoppingCriteria(max_tokens=request.max_tokens, stop_sequences=stop_sequences),
+        stopping_criteria=StoppingCriteria(
+            max_tokens=request.max_tokens, stop_sequences=stop_sequences
+        ),
         debug_options=DebugOptions(ignore_eos=ignore_eos),
     )
     if isinstance(request.messages, str):
@@ -196,7 +205,9 @@ async def generate_completion_stream(
                     finish_reason=seq.finish_reason.value
                     if seq.finish_reason is not None
                     else None,
-                    logprob_info=Logprobs(content=seq.logprob_info) if seq.logprob_info != [] else None
+                    logprob_info=Logprobs(content=seq.logprob_info)
+                    if seq.logprob_info != []
+                    else None,
                 )
                 for seq in res.sequences
             ]
@@ -217,7 +228,7 @@ async def collect_result_stream(
     finish_reasons = [None] * num_sequences
     num_prompt_tokens = 0
     num_generated_tokens = [0 for _ in range(num_sequences)]
-    logprob_infos = [[] for _ in range(num_sequences)] # type: ignore
+    logprob_infos = [[] for _ in range(num_sequences)]  # type: ignore
     async for res in result_generator:
         # TODO: verify that the request cancellation happens after this returns
         if res.error:
@@ -241,7 +252,9 @@ async def collect_result_stream(
                 finish_reasons[seq.index] = seq.finish_reason.value  # type: ignore
 
     choices = []
-    for index, (logprob_info_seq, chunks, finish_reason) in enumerate(zip(logprob_infos, sequences, finish_reasons)):
+    for index, (logprob_info_seq, chunks, finish_reason) in enumerate(
+        zip(logprob_infos, sequences, finish_reasons)
+    ):
         logprobs = None
         if logprob_info_seq != []:
             logprobs = Logprobs(content=logprob_info_seq)

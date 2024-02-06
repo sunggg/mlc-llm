@@ -23,6 +23,7 @@ from .base import (
 )
 from .engine_common import get_new_request_state, prepare_output
 from .model_module import ModelModule, TokenizerModule
+from ..model.base import get_model_artifact_config
 from .staging_engine_worker import (
     AddRequestsCommand,
     CancelRequestCommand,
@@ -57,6 +58,11 @@ class StagingInferenceEngine(ScopedInferenceEngine):
         self.requests_lock = Lock()
         self.requests = dict[RequestId, RequestState]()
 
+        # TODO(@team): This is a temporary solution to expose model config to higher API layer.
+        #   Follow-up with the proper solution
+        self.model_artifact_config = get_model_artifact_config(
+            model_module_loader_kwargs["model_artifact_path"]
+        )
         self.tokenizer = tokenizer_module.tokenizer
         self.conversation_template = tokenizer_module.conversation_template
 
@@ -231,6 +237,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                         )
                     else:
                         delta = None
+                        logprob_info = None
 
                     if not state.is_prefilled:
                         # Successfully completed a prefill request
