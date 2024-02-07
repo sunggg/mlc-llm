@@ -247,11 +247,16 @@ def _test_logprobs(
     engine,
     num_requests=10,
 ):
-    prompt = "hi could you please implement merge sort?"
+    prompts = [
+        "Hi could you please implement merge sort?",
+        "What is the best city in the world?",
+        "Can you write a poem for Seattle?",
+        "Describe lion for kids.",
+    ]
     requests = [
         create_request(
             idx=str(n),
-            prompt=prompt,
+            prompt=random.choice(prompts),
             temp=0,
             freq_pen=0,
             pre_pen=0,
