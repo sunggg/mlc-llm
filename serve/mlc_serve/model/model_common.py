@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Sequence
 
 import structlog
 import numpy as np
@@ -80,7 +80,7 @@ def prepare_textgen_result(
 def sample_from_logits(
     logits: Union[tvm.nd.NDArray, torch.Tensor],
     sequence_ids: List[SequenceId],
-    requests: List[RequestType],
+    requests: Sequence[RequestType],
     sampling_metadata: SamplingState,
     vocab_size: int,
     copy_stream: torch.cuda.Stream,

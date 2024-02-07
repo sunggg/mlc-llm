@@ -26,6 +26,7 @@ from ..engine.model_module import (
     EvalMultiQueryRequest,
     PrefillRequest,
     DecodeRequest,
+    TextGenerator,
     TextGenerationResult,
     RequestType,
 )
@@ -148,7 +149,7 @@ class Model:
             assert 0, f"{config.model_type} is NOT supported yet"
 
         self._copy_stream: torch.cuda.Stream = torch.cuda.Stream()
-        self.torch_dev = "cuda"
+        self.torch_dev: str = "cuda"
 
         if self.sliding_window:
             self.block_sliding_window = self.sliding_window // CacheManager.block_size
@@ -475,7 +476,7 @@ class Model:
 
 def init_tvm_model(
     model_artifact_config: ModelArtifactConfig, engine_config: MLCServeEngineConfig
-) -> Tuple[Model, CacheManager]:
+) -> Tuple[TextGenerator, CacheManager]:
     dev = tvm.device("cuda", 0)
 
     model = Model(model_artifact_config, dev)

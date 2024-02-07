@@ -15,7 +15,7 @@ LOG = structlog.stdlib.get_logger(__name__)
 
 
 def _apply_top_p_top_k(
-    logits: torch.Tenosr, top_ps: torch.Tenosr, top_ks: torch.Tenosr
+    logits: torch.Tensor, top_ps: torch.Tensor, top_ks: torch.Tensor
 ):
     # TODO(@team): Check the ordering. We currently apply top-p -> top-k.
     logits_sort, logits_idx = logits.sort(dim=-1, descending=True)
