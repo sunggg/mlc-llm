@@ -14,7 +14,9 @@ from ..engine import (
 LOG = structlog.stdlib.get_logger(__name__)
 
 
-def _apply_top_p_top_k(logits, top_ps, top_ks):
+def _apply_top_p_top_k(
+    logits: torch.Tenosr, top_ps: torch.Tenosr, top_ks: torch.Tenosr
+):
     # TODO(@team): Check the ordering. We currently apply top-p -> top-k.
     logits_sort, logits_idx = logits.sort(dim=-1, descending=True)
 
@@ -38,6 +40,48 @@ def _apply_top_p_top_k(logits, top_ps, top_ks):
 
 @dataclass
 class SamplingTensors:
+    """
+    Sampling states prepared for sampling computations (`adjust_logits()` and `sample()`).
+    We keep mask tensors in CPU since putting them on GPU showed small performance regression.
+    Args:
+        mask_random: torch.Tensor
+            Mask for requests with random sampling.
+            shape: (batch_size, )
+        mask_greedy: torch.Tensor
+            Mask for requests with greedy sampling.
+            shape: (batch_size, )
+        mask_top_logprob: torch.Tensor
+            Mask for requests with top_logprob.
+            shape: (LOGPROB_TOP_K_MAX) + 1, batch_size,)
+        temperatures: torch.Tensor
+            Tensor for temperature values
+            shape: (batch_size, )
+        top_ps: torch.Tensor
+            Tensor for top-p values
+            shape: (batch_size, )
+        top_ks: torch.Tensor
+            Tensor for top-k values
+            shape: (batch_size, )
+        frequency_penalties: torch.Tensor
+            Tensor for frequency penalty values
+            shape: (batch_size, )
+        presence_penalties: torch.Tensor
+            Tensor for presence penalty values
+            shape: (batch_size, )
+        repetition_penalties: torch.Tensor
+            Tensor for repetition penalty values
+            shape: (batch_size, )
+        logit_bias_indices: torch.Tensor
+            Tensor for indices of logit bias
+            shape: (num_logit_bias_pairs, )
+        logit_bias_values: torch.Tensor
+            Tensor for values of logit bias
+            shape: (num_logit_bias_pairs, )
+        past_output_tokens: torch.Tensor
+            Tensor for generated tokens
+            shape: (batch_size, max_num_gen_tokens,)
+    """
+
     mask_random: torch.Tensor
     mask_greedy: torch.Tensor
     mask_top_logprob: torch.Tensor
@@ -68,7 +112,7 @@ class SamplingTensors:
         list_logit_bias_values: List[List[float]],
         list_past_output_tokens: List[List[int]],
     ):
-        # NOTE: Keep `mask_random_t` and `mask_greedy_t` tensors in CPU.
+        # NOTE: Keep `mask_random` and `mask_greedy` tensors in CPU.
         #       Moving them to gpu showed a small performance regression.
         mask_random = torch.tensor(
             list_mask_random,
@@ -154,7 +198,38 @@ class SamplingTensors:
 
 
 @dataclass
-class SamplingMetadata:
+class SamplingState:
+    """
+    Sampling states prepared for sampling computations (`adjust_logits()` and `sample()`).
+
+    Args:
+        has_random: bool
+            True if the current batch contains a request (or requests)
+            with random sampling.
+        has_greedy: bool
+            True if the current batch contains a request (or requests)
+            with greedy sampling.
+        apply_top_p_top_k: bool
+            True if the current batch contains a request (or requests)
+            with top-p or top-k.
+        apply_penalty: bool
+            True if the current batch contains a request (or requests)
+            with at least one of the repetition/frequency/presence penalties.
+        apply_bias: bool
+            True if the current batch contains a request (or requests)
+            with logit bias
+        has_logprob: bool
+            True if the current batch contains a request (or requests)
+            with logprob
+        logprob_batch_indices: List[int]
+            A list of indices of the requests with logprob inside the batch
+        sampling_tensors: SamplingTensors
+            A set of torch tensors that contains masks and parameter
+            values for sampling computation
+        sampling_params: List[SamplingParams]
+            A list of SamplingParams from the user request
+    """
+
     has_random: bool
     has_greedy: bool
     apply_top_p_top_k: bool
@@ -244,7 +319,6 @@ class SamplingMetadata:
 
         num_random_samples = idx_random + 1
         num_greedy_samples = idx_greedy + 1
-        assert num_random_samples + num_greedy_samples == batch_size
 
         has_random = num_random_samples > 0
         has_greedy = num_greedy_samples > 0
@@ -333,8 +407,9 @@ def adjust_logits(logits, sampling_metadata, vocab_size):
         sampling_tensors.logit_bias_values,
     )
 
-    # TODO(vvchernov): need to strictly define order of using penalties and logit bias or
-    # prohibit simultaneous using of them. At the latter case it can be LogitProcessor
+    # TODO(vvchernov): make sure we are applying various sampling params
+    # (e.g., repetition penalty, frequency/presence penalty, logit bias, temperature...)
+    # in the right order.
     if apply_penalty:
         repetition_penalties_t = repetition_penalties_t[:, None].repeat(1, vocab_size)
         logits = torch.where(
@@ -372,7 +447,7 @@ class SamplingOutput:
 
 def sample(
     logits: torch.Tensor,
-    sampling_metadata: SamplingMetadata,
+    sampling_metadata: SamplingState,
     check_safety: bool = False,
 ) -> SamplingOutput:
     def _is_safe_to_sample(prob_like):

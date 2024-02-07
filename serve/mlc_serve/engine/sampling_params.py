@@ -45,8 +45,8 @@ class SamplingParams:
             to -1 to consider all tokens.
         logit_bias: The bias applied on the logit before sampling. Must be in
             [-100, 100].
-        logit_bias_index: Internal data container for indices extracted from logit_bias.
-        logit_bias_value: Internal data container for values extracted from logit_bias.
+        logit_bias_index: Internal data container that stores indices of `logit_bias`.
+        logit_bias_value: Internal data container that stores values of `logit_bias`.
         logprobs: Optional[bool] Whether to return log probabilities of the output
             tokens or not. If true, returns the log probabilities of each output
             token returned in the content of message.

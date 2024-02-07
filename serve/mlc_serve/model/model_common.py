@@ -18,7 +18,7 @@ from ..engine.model_module import (
     RequestType,
     TextGenerationResult,
 )
-from .sampler import sample, adjust_logits, SamplingMetadata, SamplingOutput
+from .sampler import sample, adjust_logits, SamplingState, SamplingOutput
 
 
 LOG = structlog.stdlib.get_logger(__name__)
@@ -81,7 +81,7 @@ def sample_from_logits(
     logits: Union[tvm.nd.NDArray, torch.Tensor],
     sequence_ids: List[SequenceId],
     requests: List[RequestType],
-    sampling_metadata: SamplingMetadata,
+    sampling_metadata: SamplingState,
     vocab_size: int,
     copy_stream: torch.cuda.Stream,
     torch_dtype: torch.dtype,
@@ -135,7 +135,7 @@ def sample_from_logits(
             # Assume this code path is taken rarely and the recomputation overhead is
             # marginal.
             with torch.cuda.stream(copy_stream):
-                new_sampling_metadata = SamplingMetadata.from_sampling_params(
+                new_sampling_metadata = SamplingState.from_sampling_params(
                     [sampling_param],
                     [past_decode_tokens_per_request],
                     torch_dtype,

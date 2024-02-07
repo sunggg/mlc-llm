@@ -1,6 +1,6 @@
 import torch
 import pytest
-from mlc_serve.model.sampler import SamplingMetadata, adjust_logits
+from mlc_serve.model.sampler import SamplingState, adjust_logits
 from mlc_serve.engine import SamplingParams, SAMPLING_EPS
 
 dtype = torch.float32
@@ -14,7 +14,7 @@ def get_sampling_metadata(sampling_params, past_output_tokens=None):
         past_output_tokens = [[] for _ in range(batch_size)]
     _copy_stream: torch.cuda.Stream = torch.cuda.Stream()
     with torch.cuda.stream(_copy_stream):
-        sampling_metadata = SamplingMetadata.from_sampling_params(
+        sampling_metadata = SamplingState.from_sampling_params(
             sampling_params,
             list_past_output_tokens=past_output_tokens,
             dtype=dtype,

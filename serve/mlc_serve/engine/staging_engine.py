@@ -211,6 +211,10 @@ class StagingInferenceEngine(ScopedInferenceEngine):
 
                 with structlog.contextvars.bound_contextvars(**state.contextvars):
                     if seq_output.error is not None:
+                        LOG.exception(
+                            "An error occurred during generating sequence outputs.",
+                            exc=seq_output.error,
+                        )
                         outputs.append(
                             RequestOutput(
                                 request_id,

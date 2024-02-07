@@ -29,7 +29,7 @@ from ..engine.model_module import (
     TextGenerationResult,
     RequestType,
 )
-from .sampler import SamplingMetadata
+from .sampler import SamplingState
 
 LOG = structlog.stdlib.get_logger(__name__)
 
@@ -240,7 +240,7 @@ class Model:
         # Prepare sampling tensors in another stream to overlap
         # CPU<->GPU data transfer with GPU computation in forward pass.
         with torch.cuda.stream(self._copy_stream):
-            sampling_metadata = SamplingMetadata.from_sampling_params(
+            sampling_metadata = SamplingState.from_sampling_params(
                 sampling_params,
                 past_decode_tokens,
                 self.torch_dtype,
@@ -313,9 +313,9 @@ class Model:
         cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
         batch_size = len(requests)
+        LOG.debug(f"Generation batch size: f{batch_size}.", batch_size=batch_size)
         if batch_size == 0:
             return []
-        LOG.debug(f"Batch size: {batch_size}")
 
         is_prefill = isinstance(requests[0], PrefillRequest)
         is_multi_query_decode = isinstance(requests[0], EvalMultiQueryRequest)
@@ -333,12 +333,18 @@ class Model:
         for request in requests:
             if isinstance(request, PrefillRequest):
                 seq_id = get_prompt_sequence_id(request.request_id)
-                # Use `vocab_size` as a padding
+                # Use `vocab_size` as a padding.
+                # This is convenient way to filter out paddings
+                # after the vectorized sampling computation
+                # since logit index will be in range of [0,vocab_size)
                 request_past_decode_tokens = [self.vocab_size]
             elif isinstance(request, DecodeRequest):
                 seq_id = request.sequence_id
                 prompt_lens.append(request.prompt_token_counts)
                 # Use `vocab_size` as a padding
+                # This is convenient way to filter out paddings
+                # after the vectorized sampling computation
+                # since logit index will be in range of [0,vocab_size)
                 request_past_decode_tokens = [self.vocab_size, *request.token_ids]
             else:
                 raise Exception("`EvalMultiQueryRequest` should not reach here.")
@@ -353,7 +359,7 @@ class Model:
         # Prepare sampling tensors in another stream to overlap
         # CPU<->GPU data transfer with GPU computation in forward pass.
         with torch.cuda.stream(self._copy_stream):
-            sampling_metadata = SamplingMetadata.from_sampling_params(
+            sampling_metadata = SamplingState.from_sampling_params(
                 sampling_params,
                 past_decode_tokens,
                 self.torch_dtype,
