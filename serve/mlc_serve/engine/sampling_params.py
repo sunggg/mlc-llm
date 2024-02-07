@@ -54,7 +54,7 @@ class SamplingParams:
             the number of most likely tokens to return at each token position,
             each with an associated log probability. logprobs must be set to
             true if this parameter is used.
-        vocab_size: Not a part of the sampling params, but need for the argument validation.
+        vocab_size: Not a part of the sampling params, but needed for the argument validation.
             Remove this when we have a better solution.
     """
 
@@ -118,7 +118,7 @@ class SamplingParams:
                         f"logit bias must be in [-100, 100], got {bias} for token {token}."
                     )
                 if not 1 <= token <= self.vocab_size:
-                    raise ValueError(f"index must be in [1, vocab_size]")
+                    raise ValueError(f"token id must be in [1, vocab_size]")
 
         if self.repetition_penalty <= 0:
             raise ValueError(

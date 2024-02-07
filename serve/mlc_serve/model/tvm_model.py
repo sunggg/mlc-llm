@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Tuple
+from typing import List, Tuple, Sequence
 
 import structlog
 import numpy as np
@@ -309,7 +309,7 @@ class Model:
 
     def generate(
         self,
-        requests: List[RequestType],
+        requests: Sequence[RequestType],
         cache: KVCacheInfo,
     ) -> List[TextGenerationResult]:
         batch_size = len(requests)

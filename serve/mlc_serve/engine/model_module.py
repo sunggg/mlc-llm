@@ -155,7 +155,7 @@ class TextGenerator(Protocol):
 
     def generate(
         self,
-        requests: Sequence[Union[PrefillRequest, DecodeRequest, EvalMultiQueryRequest]],
+        requests: Sequence[RequestType],
         kv_cache,
     ) -> List[TextGenerationResult]:
         """

@@ -211,7 +211,6 @@ class StagingInferenceEngine(ScopedInferenceEngine):
 
                 with structlog.contextvars.bound_contextvars(**state.contextvars):
                     if seq_output.error is not None:
-                        LOG.info("Error")
                         outputs.append(
                             RequestOutput(
                                 request_id,
