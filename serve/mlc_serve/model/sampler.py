@@ -426,16 +426,13 @@ def sample(
         top_logprobs = all_top_logprobs[mask]
         for idx, batch_idx in enumerate(sampling_metadata.logprob_batch_indices):
             next_token = next_tokens[batch_idx]
-            is_logprobs = sampling_metadata.sampling_params[batch_idx].logprobs
-
+            assert sampling_metadata.sampling_params[batch_idx].logprobs
             top_k = sampling_metadata.sampling_params[batch_idx].top_logprobs
-
-            if is_logprobs:
-                logprob_infos[batch_idx] = RawLogprobsInfo(
-                    current_token_id=next_token,
-                    current_logprob=logprobs[batch_idx][next_token],
-                    top_token_ids=top_tokens[idx][:top_k],
-                    top_logprobs=top_logprobs[idx][:top_k],
-                )
+            logprob_infos[batch_idx] = RawLogprobsInfo(
+                current_token_id=next_token,
+                current_logprob=logprobs[batch_idx][next_token],
+                top_token_ids=top_tokens[idx][:top_k],
+                top_logprobs=top_logprobs[idx][:top_k],
+            )
 
     return SamplingOutput(next_tokens, logprob_infos)
