@@ -251,16 +251,11 @@ def _test_top_p_top_k():
                 Nucleus filtering is described in Holtzman et al. (http://arxiv.org/abs/1904.09751)
             top_k >0: keep only top k tokens with highest probability (top-k filtering).
         """
-        top_ps, top_ks = [], []
-        for top_p, top_k in top_pks:
-            top_ps.append(top_p)
-            top_ks.append(top_k)
         batch_size = len(top_pks)
         lst_logits = []
         for ii in range(batch_size):
             _logits = logits[ii]
-            top_k = min(top_k, _logits.size(-1))  # Safety check
-
+            top_p, top_k = top_pks[ii]
             if top_p > 0.0:
                 sorted_logits, sorted_indices = torch.sort(_logits, descending=True)
                 cumulative_probs = torch.cumsum(
@@ -280,9 +275,12 @@ def _test_top_p_top_k():
 
             if top_k > 0:
                 # Remove all tokens with a probability less than the last token of the top-k
-                indices_to_remove = (
-                    _logits < torch.topk(_logits, top_k)[0][..., -1, None]
-                )
+                top_k_values = torch.topk(_logits, top_k)[0]
+                # Use `None` to insert a singleton dimension
+                # Equivalent to apply `squeeze` to the given dimension
+                # e.g., arr.shape = [3,3]
+                #       arr[:,:,None].shape = [3,3,1]
+                indices_to_remove = _logits < top_k_values[..., -1, None]
                 _logits[indices_to_remove] = filter_value
 
             lst_logits.append(_logits)
@@ -313,8 +311,7 @@ def _test_top_p_top_k():
     new_logits = adjust_logits(logits, sampling_metadata, vocab_size)
     expected = logits.clone()
     expected = get_expected_result(expected, top_pks)
-    # TODO(team): this is currently broken. Need to fix.
-    # assert torch.allclose(expected, new_logits)
+    assert torch.allclose(expected, new_logits)
 
 
 if __name__ == "__main__":
