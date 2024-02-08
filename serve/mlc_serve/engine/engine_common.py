@@ -184,10 +184,9 @@ def prepare_logprob(
         assert info is not None
         assert info.top_token_ids is not None
 
+        top_logprobs: List[TopLogprobs] = []
         if info.top_logprobs is not None:
             assert info.top_logprobs is not None
-            top_logprobs: List[TopLogprobs] = []
-
             token_ids = info.top_token_ids.cpu().numpy()
             logprobs = info.top_logprobs.cpu().numpy()
 

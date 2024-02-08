@@ -86,8 +86,7 @@ class PagedCacheModelModule:
 
         self.engine_config = engine_config
         self.model_artifact_config = model_artifact_config
-        # TODO(@team): fix type checking issue. currently ignore to make mypy happy.
-        self.text_generator = PagedCacheModelTextGenerator(model)  # type: ignore
+        self.text_generator = PagedCacheModelTextGenerator(model)
         self.cache_manager = cache_manager
 
         tokenizer_module = HfTokenizerModule(model_artifact_path)

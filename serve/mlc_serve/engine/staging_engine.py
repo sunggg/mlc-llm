@@ -240,7 +240,7 @@ class StagingInferenceEngine(ScopedInferenceEngine):
                         )
                     else:
                         delta = None
-                        logprob_info = None
+                        logprob_info = []
 
                     if not state.is_prefilled:
                         # Successfully completed a prefill request

@@ -480,9 +480,7 @@ def sample(
         np_mask_random = mask_random_t.cpu().numpy()
         next_tokens[np_mask_random] = res_random.cpu().numpy()
 
-    logprob_infos: List[Optional[RawLogprobsInfo]] = np.full(
-        (batch_size,), fill_value=None, dtype=RawLogprobsInfo
-    )
+    logprob_infos: List[Optional[RawLogprobsInfo]] = [None] * batch_size
     if sampling_metadata.has_logprob:
         # If everything is random sampling, save one extra softmax
         if not sampling_metadata.has_greedy:
