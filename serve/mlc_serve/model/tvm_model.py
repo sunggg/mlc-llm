@@ -1,5 +1,6 @@
 import math
 import os
+import json
 from typing import List, Tuple, Sequence
 
 import structlog
@@ -79,8 +80,18 @@ def get_tvm_model(config, dev):
             f"{config.model_artifact_path}/params", dev
         )
         params = []
+        try:
+            params_names = [
+                d["name"]
+                for d in json.loads(str(vm.module.get_function("_metadata")()))[
+                    "params"
+                ]
+            ]
+        except:
+            params_names = [f"param_{i}" for i in range(_meta["ParamSize"])]
+
         for i in range(_meta["ParamSize"]):
-            params.append(_params[f"param_{i}"])
+            params.append(_params[params_names[i]])
 
         return vm.module, params, None
 
