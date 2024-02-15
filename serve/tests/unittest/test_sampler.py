@@ -8,15 +8,18 @@ dev = "cuda"
 vocab_size = 32000
 
 
-def get_sampling_state(sampling_params, past_output_tokens=None):
+def get_sampling_state(sampling_params, past_output_tokens=None, prompt_masks=None):
     batch_size = len(sampling_params)
     if past_output_tokens is None:
         past_output_tokens = [[] for _ in range(batch_size)]
+    if prompt_masks is None:
+        prompt_masks = [[] for _ in range(batch_size)]
     _copy_stream: torch.cuda.Stream = torch.cuda.Stream()
     with torch.cuda.stream(_copy_stream):
         sampling_state = SamplingState.from_sampling_params(
             sampling_params,
             list_past_output_tokens=past_output_tokens,
+            list_mask_prompt=prompt_masks,
             dtype=dtype,
             dev=dev,
             vocab_size=vocab_size,
@@ -28,9 +31,7 @@ def get_sampling_state(sampling_params, past_output_tokens=None):
 def _test_temperature(temp=0, batch_size=1):
     shape = (batch_size, vocab_size)
     logits = torch.rand(shape, dtype=dtype, device=dev)
-    sampling_param = SamplingParams(
-        temperature=temp,
-    )
+    sampling_param = SamplingParams(temperature=temp)
 
     sampling_state = get_sampling_state([sampling_param])
 
@@ -149,6 +150,7 @@ def _test_penalties():
     presence_penalties = [0.8]
     frequency_penalties = [0.3]
     past_output_tokens = [[2, 2, 2, 3]]
+    prompt_masks = [[False] * vocab_size] * batch_size
 
     def prepare_metadata(past_output_tokens):
         count_map = []
@@ -188,7 +190,7 @@ def _test_penalties():
         )
     ]
     sampling_state = get_sampling_state(
-        sampling_param, past_output_tokens=past_output_tokens
+        sampling_param, past_output_tokens=past_output_tokens, prompt_masks=prompt_masks
     )
     new_logits = adjust_logits(logits, sampling_state, vocab_size)
     assert torch.allclose(expected, new_logits)
@@ -199,6 +201,7 @@ def _test_penalties():
     presence_penalties = [0.8, 0.7, -0.8]
     frequency_penalties = [-0.3, 2.0, 1.2]
     past_output_tokens = [[2, 2, 2, 3, 5], [3, 1, 2, 4], [3, 3, 1]]
+    prompt_masks = [[False] * vocab_size] * batch_size
 
     count_map, mask = prepare_metadata(past_output_tokens)
     expected = get_expected_result(
@@ -213,7 +216,9 @@ def _test_penalties():
         for i in range(batch_size)
     ]
     sampling_state = get_sampling_state(
-        sampling_params, past_output_tokens=past_output_tokens
+        sampling_params,
+        past_output_tokens=past_output_tokens,
+        prompt_masks=prompt_masks,
     )
     new_logits = adjust_logits(logits, sampling_state, vocab_size)
     assert torch.allclose(expected, new_logits)
@@ -303,6 +308,21 @@ def _test_top_p_top_k():
     shape = (batch_size, vocab_size)
     logits = torch.rand(shape, dtype=dtype, device=dev)
     top_pks = [(0.7, 3), (0.5, 2), (0.8, 5)]
+    sampling_params = [
+        SamplingParams(top_p=top_p, top_k=top_k) for top_p, top_k in top_pks
+    ]
+    sampling_state = get_sampling_state(sampling_params)
+
+    new_logits = adjust_logits(logits, sampling_state, vocab_size)
+    expected = logits.clone()
+    expected = get_expected_result(expected, top_pks)
+    assert torch.allclose(expected, new_logits)
+
+    # Mixed top_p/top_ks
+    batch_size = 6
+    shape = (batch_size, vocab_size)
+    logits = torch.rand(shape, dtype=dtype, device=dev)
+    top_pks = [(0.7, 3), (1.0, -1), (1.0, -1), (0.5, 2), (1.0, -1), (0.8, 5)]
     sampling_params = [
         SamplingParams(top_p=top_p, top_k=top_k) for top_p, top_k in top_pks
     ]

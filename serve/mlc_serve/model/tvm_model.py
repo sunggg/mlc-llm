@@ -263,6 +263,7 @@ class Model:
         last_query_offsets: List[int] = []
         sampling_params = []
         past_decode_tokens = []
+        prompt_masks = []
         for request in requests:
             assert not isinstance(request.queries, DraftTokens)
             sequence_ids.append(request.sequence_id)
@@ -273,6 +274,8 @@ class Model:
                     last_query_offsets[-1] + request.queries.num_tokens
                 )
             sampling_params.append(request.sampling_params)
+            # TODO: Empty mask for now. This is for repetion penalty
+            prompt_masks.append([])
             # Use `vocab_size` as a padding
             past_decode_tokens.append([self.vocab_size, *request.queries.token_ids])
 
@@ -282,6 +285,7 @@ class Model:
             sampling_state = SamplingState.from_sampling_params(
                 sampling_params,
                 past_decode_tokens,
+                prompt_masks,
                 self.torch_dtype,
                 self.torch_dev,
                 self.vocab_size,
@@ -371,6 +375,7 @@ class Model:
         num_decode_query_tokens = 1
         sampling_params = []
         past_decode_tokens = []
+        prompt_masks = []
 
         for request in requests:
             if isinstance(request, PrefillRequest):
@@ -392,6 +397,7 @@ class Model:
                 raise Exception("`EvalMultiQueryRequest` should not reach here.")
 
             past_decode_tokens.append(request_past_decode_tokens)
+            prompt_masks.append(request.prompt_mask)
             sequence_ids.append(seq_id)
 
             assert not isinstance(request, EvalMultiQueryRequest)
@@ -404,6 +410,7 @@ class Model:
             sampling_state = SamplingState.from_sampling_params(
                 sampling_params,
                 past_decode_tokens,
+                prompt_masks,
                 self.torch_dtype,
                 self.torch_dev,
                 self.vocab_size,

@@ -129,7 +129,11 @@ class SamplingTensors:
         )
         # `mask_top_logprob` will be on cpu
         mask_top_logprob = torch.from_numpy(list_mask_top_logprob)
-        mask_prompt = torch.stack(list_mask_prompt)
+        mask_prompt = torch.tensor(
+            list_mask_prompt,
+            dtype=torch.bool,
+            device="cpu",
+        )
         temp = torch.tensor(
             list_temperatures,
             dtype=dtype,
@@ -252,12 +256,12 @@ class SamplingState:
         cls,
         sampling_params: List[SamplingParams],
         list_past_output_tokens: List[List[int]],
+        list_mask_prompt: List[List[bool]],
         dtype: torch.dtype,
         dev: str,
         vocab_size: int,
     ):
         list_mask_random = []
-        list_mask_prompt = []
         list_temperatures = []
         list_top_ps = []
         list_top_ks = []
@@ -315,7 +319,6 @@ class SamplingState:
             list_frequency_penalties.append(param.frequency_penalty)
             list_presence_penalties.append(param.presence_penalty)
             list_repetition_penalties.append(param.repetition_penalty)
-            list_mask_prompt.append(param.mask_prompt)
 
             if param.logit_bias_index:
                 assert param.logit_bias_value
@@ -387,9 +390,9 @@ def get_bin_counts_and_mask(
     vocab_size: int,
     num_seqs: int,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    bin_counts = torch.zeros((num_seqs, vocab_size + 1),
-                             dtype=torch.long,
-                             device=tokens.device)
+    bin_counts = torch.zeros(
+        (num_seqs, vocab_size + 1), dtype=torch.long, device=tokens.device
+    )
     bin_counts.scatter_add_(1, tokens, torch.ones_like(tokens))
     bin_counts = bin_counts[:, :vocab_size]
     mask = bin_counts > 0
@@ -397,10 +400,7 @@ def get_bin_counts_and_mask(
     return bin_counts, mask
 
 
-def adjust_logits(
-        logits: torch.Tensor,
-        sampling_state: SamplingState,
-        vocab_size: int):
+def adjust_logits(logits: torch.Tensor, sampling_state: SamplingState, vocab_size: int):
     batch_size = logits.shape[0]
     (
         apply_top_p_top_k,
