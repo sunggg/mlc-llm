@@ -380,8 +380,7 @@ class BuildArgs:
         default=0,
         metadata={
             "help": (
-                "The number of attention sinks to keep in cache."
-                "Only supported on mistral yet."
+                "The number of attention sinks to keep in cache." "Only supported on mistral yet."
             ),
         },
     )
@@ -462,11 +461,15 @@ def _parse_args(parsed) -> argparse.Namespace:
     utils.argparse_postproc_common(parsed)
 
     if parsed.use_vllm_attention:
-        print("WARNING: --use-vllm-attention is deprecated. Use --paged-kv-cache-type vllm instead.")
+        print(
+            "WARNING: --use-vllm-attention is deprecated. Use --paged-kv-cache-type vllm instead."
+        )
         parsed.paged_kv_cache_type = "vllm"
 
     if parsed.paged_kv_cache_type in ["vllm", "flash-decoding"]:
-        assert parsed.enable_batching, "--enable_batching is required for using vLLM or Flash-Decoding."
+        assert (
+            parsed.enable_batching
+        ), "--enable_batching is required for using vLLM or Flash-Decoding."
         assert parsed.target_kind == "cuda", "vLLM and Flash-Decoding are only supported for CUDA."
 
         if parsed.paged_kv_cache_type == "vllm":
@@ -491,7 +494,9 @@ def _parse_args(parsed) -> argparse.Namespace:
     artifact_tag = parsed.artifact_tag if parsed.artifact_tag else "-".join(model_name)
     parsed.artifact_path = os.path.join(parsed.artifact_path, artifact_tag)
 
-    parsed.lib_name = f"{parsed.model}-{parsed.quantization.name}-{parsed.target_kind}.{parsed.lib_format}"
+    parsed.lib_name = (
+        f"{parsed.model}-{parsed.quantization.name}-{parsed.target_kind}.{parsed.lib_format}"
+    )
     parsed.lib_path = os.path.join(parsed.artifact_path, parsed.lib_name)
 
     return parsed
@@ -704,6 +709,9 @@ def mod_transform_before_build(
                 ]
             )(mod)
 
+            mod.show()
+            # assert 0
+
     mod = mlc_llm.transform.FuseTransposeMatmul()(mod)
     mod = relax.pipeline.get_pipeline()(mod)  # pylint: disable=no-value-for-parameter
     mod = mlc_llm.transform.FuseDecodeMatmulEwise()(mod)
@@ -716,19 +724,19 @@ def mod_transform_before_build(
 
     return mod_deploy
 
-def dump_build_config(
-    args: argparse.Namespace
-):
+
+def dump_build_config(args: argparse.Namespace):
     build_config_path = os.path.join(args.artifact_path, "build_config.json")
     config: Dict[str, Any] = {
         "num_shards": args.num_shards,
         "quantization": args.quantization.name,
         "paged_kv_cache_type": args.paged_kv_cache_type,
         "library_name": args.lib_name,
-        "build_options": str(args)
+        "build_options": str(args),
     }
     with open(build_config_path, "w", encoding="utf-8") as outfile:
         json.dump(config, outfile, indent=4)
+
 
 def dump_mlc_chat_config(
     args: argparse.Namespace,
@@ -845,7 +853,12 @@ def build_model_from_args(args: argparse.Namespace):
             "and it is highly recommended to use q4f16_1 instead"
         )
 
-    use_ft_quant = args.quantization.name in ["q4f16_ft", "q8f16_ft", "q4f16_ft_group", "q8f16_ft_group"]
+    use_ft_quant = args.quantization.name in [
+        "q4f16_ft",
+        "q8f16_ft",
+        "q4f16_ft_group",
+        "q8f16_ft_group",
+    ]
 
     if args.num_shards > 1:
         if (not args.build_model_only) and (not args.convert_weights_only):
@@ -895,17 +908,19 @@ def build_model_from_args(args: argparse.Namespace):
 
         assert args.model_category in model_generators, f"Model {args.model} not supported"
 
-        mod, param_manager, params, model_config = model_generators[args.model_category].get_model(
-            args, config
-        )
-
-        if args.model_category == "mistral":
-            args.sliding_window = model_config.sliding_window
+        if args.model_category == "mistral" or args.model_category == "mixtral":
+            assert "sliding_window" in config
+            if config["sliding_window"] is None:
+                config["sliding_window"] = 4096
             # This line is introduced by the merge with upstream
             #   see: https://github.com/octoml/mlc-llm/pull/52
             # However, HF config does not have this info and we don't need this info.
             # So commented out for now.
             # args.sliding_window_chunk_size = model_config.sliding_window_chunk_size
+
+        mod, param_manager, params, model_config = model_generators[args.model_category].get_model(
+            args, config
+        )
 
         for qspec_updater_class in param_manager.qspec_updater_classes:
             qspec_updater = qspec_updater_class(param_manager)
@@ -917,7 +932,9 @@ def build_model_from_args(args: argparse.Namespace):
             # Run pre-quantization if provided.
             args.model_path = param_manager.run_pre_quantize(args.model_path)
             param_manager.init_torch_pname_to_bin_name(args.use_safetensors)
-            parameter_transforms.append(param_manager.create_parameter_transformation(optimize_parameter_order=False)) # disable to prevent errors
+            parameter_transforms.append(
+                param_manager.create_parameter_transformation(optimize_parameter_order=False)
+            )  # disable to prevent errors
 
             # Run pre-sharding if required
             if args.num_shards > 1 and args.use_presharded_weights:
@@ -965,7 +982,9 @@ def build_model_from_args(args: argparse.Namespace):
 
                 params = preprocessed
 
-            utils.save_params(params, args.artifact_path, args.num_shards if args.use_presharded_weights else 1)
+            utils.save_params(
+                params, args.artifact_path, args.num_shards if args.use_presharded_weights else 1
+            )
 
             if not args.enable_batching:
                 if args.model_category == "rwkv" or args.model_category == "rwkv_world":
@@ -1011,7 +1030,9 @@ def build_model_from_args(args: argparse.Namespace):
                 elif "max_position_embeddings" in config:
                     max_context_length = config["max_position_embeddings"]
                 else:
-                    raise Exception("The model config should contain information about maximum context length.")
+                    raise Exception(
+                        "The model config should contain information about maximum context length."
+                    )
 
             # Overwrite some configs
             config["max_context_length"] = max_context_length
