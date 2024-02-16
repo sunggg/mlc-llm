@@ -297,10 +297,8 @@ class SamplingState:
             if param.sampling_type == SamplingType.RANDOM:
                 list_mask_random.append(True)
                 idx_random += 1
-                list_top_ps.append(param.top_p)
-                list_top_ks.append(param.top_k if param.top_k != -1 else vocab_size)
-                do_top_p |= list_top_ps[-1] < 1.0 - SAMPLING_EPS
-                do_top_k |= list_top_ks[-1] != vocab_size
+                do_top_p |= param.top_p < 1.0 - SAMPLING_EPS
+                do_top_k |= param.top_k != vocab_size
             else:
                 list_mask_random.append(False)
                 idx_greedy += 1
@@ -316,6 +314,9 @@ class SamplingState:
                 or abs(param.frequency_penalty) >= SAMPLING_EPS
                 or abs(param.repetition_penalty - 1.0) >= SAMPLING_EPS
             )
+
+            list_top_ps.append(param.top_p)
+            list_top_ks.append(param.top_k if param.top_k != -1 else vocab_size)
             list_frequency_penalties.append(param.frequency_penalty)
             list_presence_penalties.append(param.presence_penalty)
             list_repetition_penalties.append(param.repetition_penalty)
@@ -328,6 +329,7 @@ class SamplingState:
                 list_logit_bias_values.append(param.logit_bias_value)
             else:
                 list_logit_bias_indices.append([])
+                list_logit_bias_values.append([])
 
         num_random_samples = idx_random + 1
         num_greedy_samples = idx_greedy + 1

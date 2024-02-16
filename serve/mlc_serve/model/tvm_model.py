@@ -348,6 +348,7 @@ class Model:
             self.torch_dtype,
             self.torch_dev,
             past_decode_tokens,
+            prompt_masks,
         )
 
     def generate(
@@ -535,6 +536,7 @@ class Model:
             self.torch_dtype,
             self.torch_dev,
             past_decode_tokens,
+            prompt_masks,
         )
 
 

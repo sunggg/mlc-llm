@@ -61,7 +61,7 @@ def get_new_request_state(
     tokens = np.array([prompt_token_ids], dtype=np.int64)
     prompt_mask = np.zeros((vocab_size + 1,), dtype=bool)
     prompt_mask[tokens] = True
-    prompt_mask = list(prompt_mask)
+    prompt_mask = list(prompt_mask[:vocab_size])
 
     validation_err = None
     if request.validate_tokens is not None:
