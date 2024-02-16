@@ -263,7 +263,7 @@ class Model:
         last_query_offsets: List[int] = []
         sampling_params = []
         past_decode_tokens = []
-        prompt_masks = []
+        prompt_masks: List[List[bool]] = []
         for request in requests:
             assert not isinstance(request.queries, DraftTokens)
             sequence_ids.append(request.sequence_id)
@@ -275,7 +275,7 @@ class Model:
                 )
             sampling_params.append(request.sampling_params)
             # TODO: Empty mask for now. This is for repetion penalty
-            prompt_masks.append([])
+            prompt_masks.append([False])
             # Use `vocab_size` as a padding
             past_decode_tokens.append([self.vocab_size, *request.queries.token_ids])
 
