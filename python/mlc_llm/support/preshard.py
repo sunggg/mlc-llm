@@ -108,6 +108,7 @@ def _compile_shard_funcs(mod: IRModule, device: Device):
 
 
 def apply_preshard(
+    quantize_map: Any,
     named_params: Dict[str, nn.Parameter],
     tensor_parallel_shards: int,
     args: Any,
@@ -137,6 +138,7 @@ def apply_preshard(
     for name, param in named_params.items():
         shard_strategy = param.attrs.get("shard_strategy", None)
         if shard_strategy is not None:
+            _update_quantize_map(quantize_map, named_params, name, tensor_parallel_shards)
             has_shard_strategy = True
             for i in range(tensor_parallel_shards):
                 new_named_params[_sharded_param_name(name, i)] = param
