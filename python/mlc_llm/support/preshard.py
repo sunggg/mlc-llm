@@ -1,6 +1,6 @@
 """Functions for pre-sharding weights"""
 import logging
-from typing import Any, Callable, Dict, Sequence, Tuple
+from typing import Any, Callable, Dict, Sequence, Tuple, List
 
 from tvm import IRModule
 from tvm import dlight as dl
@@ -130,26 +130,29 @@ def apply_preshard(
     Tuple[Dict[str, nn.Parameter], Dict[str, Callable[[NDArray], Sequence[NDArray]]]
         The updated named parameters and the mapping from parameter name to the shard function.
     """
+
+    # Update quantize_map and named_params, create shard functions based on shard strategies.
+    model_config = args.model.config.from_file(args.config)
+    model_config.tensor_parallel_shards = tensor_parallel_shards
+    model = args.model.model(model_config)
+    model.to(args.quantization.model_dtype)
+
     bb = relax.BlockBuilder()
     param_to_shard_func = {}
     shard_func_names = set()
-    new_named_params: Dict[str, nn.Parameter] = {}
     has_shard_strategy = False
-    for name, param in named_params.items():
+    for name, param in model.state_dict().items():
         shard_strategy = param.attrs.get("shard_strategy", None)
         if shard_strategy is not None:
-            _update_quantize_map(quantize_map, named_params, name, tensor_parallel_shards)
             has_shard_strategy = True
-            for i in range(tensor_parallel_shards):
-                new_named_params[_sharded_param_name(name, i)] = param
+            _update_quantize_map(quantize_map, named_params, name, tensor_parallel_shards)
+
             # create shard functions
             param_to_shard_func[name] = shard_strategy.name
             if shard_strategy.name not in shard_func_names:
                 if not isinstance(shard_strategy, tp.ShardScalar):
                     create_shard_func(bb, param, tensor_parallel_shards)
                     shard_func_names.add(shard_strategy.name)
-        else:
-            new_named_params[name] = param
 
     if not has_shard_strategy:
         logger.warning(
@@ -163,4 +166,4 @@ def apply_preshard(
 
     for name in param_to_shard_func:
         param_to_shard_func[name] = vm[param_to_shard_func[name]]
-    return new_named_params, param_to_shard_func
+    return param_to_shard_func
